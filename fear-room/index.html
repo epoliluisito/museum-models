@@ -15,7 +15,45 @@
     }
     #hint b { color: #fff; }
   </style>
+
+<script>
+AFRAME.registerComponent('min-distance-from', {
+  schema: {
+    target: { type: 'selector' },
+    min: { type: 'number', default: 2.4 },
+    smooth: { type: 'number', default: 0.35 }
+  },
+  init: function () {
+    this.vRig = new THREE.Vector3();
+    this.vTarget = new THREE.Vector3();
+    this.delta = new THREE.Vector3();
+    this.desired = new THREE.Vector3();
+  },
+  tick: function () {
+    const t = this.data.target;
+    if (!t) return;
+
+    const rig = this.el.object3D;
+    t.object3D.getWorldPosition(this.vTarget);
+    rig.getWorldPosition(this.vRig);
+
+    this.delta.copy(this.vRig).sub(this.vTarget);
+    const d = this.delta.length();
+    if (d < this.data.min && d > 0.0001) {
+      this.desired
+        .copy(this.delta)
+        .multiplyScalar(this.data.min / d)
+        .add(this.vTarget);
+
+      this.vRig.lerp(this.desired, this.data.smooth);
+      if (rig.parent) rig.parent.worldToLocal(this.vRig);
+      rig.position.copy(this.vRig);
+    }
+  }
+});
+</script>
 </head>
+
 <body>
   <div id="hint"><b>Click once</b> to enable audio • <b>WASD / Arrows</b> move • <b>Mouse</b> look</div>
 
@@ -73,7 +111,7 @@
       class="architectural-object"
       position="-0.01 2.25 10.0"
       rotation="0 90 0"
-      width="0.24" height="0.07" depth="0.02"
+      width="0.12" height="0.035" depth="0.02"
       material="shader: standard; color: #D9D9D9; roughness: 0.96; metalness: 0.0; emissive: #000000; emissiveIntensity: 0.0"
       video-canvas-texture="video: #fearVideo; canvasWidth: 3072; canvasHeight: 1192; blurPx: 0.9; persistence: 0.18; lumaCap: 0.85; grain: 0.018"
       screen-always-video="video: #fearVideo; spillLight: #projectionSpill1"
@@ -167,7 +205,7 @@
       material="color: #0B0B0B; roughness: 1; metalness: 0"></a-box>
 
     <!-- Player Rig (spawn right in front of the screen, facing it) -->
-    <a-entity id="rig" position="0.55 0 10.0" rig-walk="speed: 2.6; radius: 0.28">
+    <a-entity id="rig" position="0.55 0 10.0" rig-walk="speed: 2.6; radius: 0.28" min-distance-from="target: #projection_screen_station_1; min: 2.4">
       <a-entity
         id="playerCam"
         position="0 1.6 0"
