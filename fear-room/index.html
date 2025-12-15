@@ -66,17 +66,16 @@
       width="0.12" height="4" depth="30"
       material="color: #0B0B0B; roughness: 1; metalness: 0"></a-box>
 
-    <!-- projection_screen_station_1 (CLEAN: no custom shader/grain/blur) -->
+    <!-- projection_screen_station_1 -->
     <a-box
       id="projection_screen_station_1"
       class="architectural-object"
       position="-0.01 2.25 10.0"
       rotation="0 90 0"
       width="12.0" height="3.5" depth="0.02"
-      material="shader: standard; src: #fearVideo; color: #D9D9D9; roughness: 0.95; metalness: 0.0; emissive: #000000; emissiveIntensity: 0.0"
-      luma-cap="cap: 0.85"
+      material="shader: standard; color: #D9D9D9; roughness: 0.96; metalness: 0.0; emissive: #000000; emissiveIntensity: 0.0"
+      video-canvas-texture="video: #fearVideo; canvasWidth: 3072; canvasHeight: 1192; blurPx: 0.9; persistence: 0.18; lumaCap: 0.85; grain: 0.018"
       screen-always-video="video: #fearVideo; spillLight: #projectionSpill1"
-      enforce-video-texture="video: #fearVideo"
       video-positional-audio="video: #fearVideo; volume: 0.22; refDistance: 1.8; maxDistance: 18; rolloff: 1.2"
     >
       <a-entity
@@ -165,7 +164,7 @@
       width="8" height="4" depth="3"
       material="color: #0B0B0B; roughness: 1; metalness: 0"></a-box>
 
-    <!-- Player Rig -->
+    <!-- Player Rig (spawn in front of projection screen) -->
     <a-entity id="rig" position="2.6 0 10.0" rig-walk="speed: 2.6; radius: 0.28">
       <a-entity
         id="playerCam"
@@ -183,18 +182,6 @@
       (function () {
         const DEG2RAD = Math.PI / 180;
         const EPS = 0.001;
-
-        // Luma cap by multiplying material color (keeps "no pure white" without custom shaders)
-        AFRAME.registerComponent('luma-cap', {
-          schema: { cap: { type: 'number', default: 0.85 } },
-          init: function () { this._apply(); },
-          update: function () { this._apply(); },
-          _apply: function () {
-            const cap = Math.max(0.0, Math.min(1.0, this.data.cap));
-            const c = Math.round(cap * 255);
-            this.el.setAttribute('material', 'color', `rgb(${c},${c},${c})`);
-          }
-        });
 
         // Always-on video playback (no click-to-stop)
         AFRAME.registerComponent('screen-always-video', {
@@ -225,26 +212,118 @@
           }
         });
 
-        // Enforce stable sampling (continuous)
-        AFRAME.registerComponent('enforce-video-texture', {
-          schema: { video: { type: 'selector' } },
-          tick: function () {
-            const mesh = this.el.getObject3D('mesh');
-            if (!mesh || !mesh.material) return;
-            const mat = mesh.material;
-            const map = mat.map;
-            if (!map) return;
-            try {
-              map.minFilter = THREE.LinearFilter;
-              map.magFilter = THREE.LinearFilter;
-              map.generateMipmaps = false;
-              map.needsUpdate = true;
+        // "Trick": render the video into an upscaled canvas texture with mild blur + persistence.
+        // This doesn't invent detail, but it stabilizes sampling (reduces "dancing blocks") and feels more like projection.
+        AFRAME.registerComponent('video-canvas-texture', {
+          schema: {
+            video: { type: 'selector' },
+            canvasWidth: { type: 'int', default: 2048 },
+            canvasHeight: { type: 'int', default: 1024 },
+            blurPx: { type: 'number', default: 0.8 },
+            persistence: { type: 'number', default: 0.15 }, // 0..0.35 (higher = more "afterglow")
+            lumaCap: { type: 'number', default: 0.85 }, // 0..1
+            grain: { type: 'number', default: 0.015 } // subtle noise to hide macroblocking
+          },
+          init: function () {
+            this.v = this.data.video;
+            this.canvas = document.createElement('canvas');
+            this.canvas.width = Math.max(256, this.data.canvasWidth|0);
+            this.canvas.height = Math.max(256, this.data.canvasHeight|0);
+            this.ctx = this.canvas.getContext('2d', { alpha: false, desynchronized: true });
+            this.ctx.imageSmoothingEnabled = true;
+            this.ctx.imageSmoothingQuality = 'high';
+            this._time = 0;
+
+            // Create texture
+            this.tex = new THREE.CanvasTexture(this.canvas);
+            this.tex.minFilter = THREE.LinearFilter;
+            this.tex.magFilter = THREE.LinearFilter;
+            this.tex.generateMipmaps = false;
+            this.tex.wrapS = THREE.ClampToEdgeWrapping;
+            this.tex.wrapT = THREE.ClampToEdgeWrapping;
+
+            // Hook into material map once mesh exists
+            const applyToMesh = () => {
+              const mesh = this.el.getObject3D('mesh');
+              if (!mesh) return;
+              const mat = mesh.material;
+              if (!mat) return;
+              mat.map = this.tex;
+              mat.needsUpdate = true;
               mat.toneMapped = false;
-            } catch (e) {}
+            };
+
+            if (this.el.getObject3D('mesh')) applyToMesh();
+            else this.el.addEventListener('object3dset', applyToMesh);
+
+            // Pre-fill with wall color to avoid flashing
+            this.ctx.fillStyle = '#0B0B0B';
+            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+            this.tex.needsUpdate = true;
+          },
+          tick: function (t, dt) {
+            this._time += dt || 0;
+            if (!this.v || this.v.readyState < 2) return; // need current frame
+
+            const w = this.canvas.width, h = this.canvas.height;
+
+            // Afterglow / persistence: fade previous frame slightly
+            const p = Math.max(0, Math.min(0.45, this.data.persistence));
+            this.ctx.save();
+            this.ctx.globalCompositeOperation = 'source-over';
+            this.ctx.globalAlpha = p;
+            this.ctx.fillStyle = '#000';
+            this.ctx.fillRect(0, 0, w, h);
+            this.ctx.restore();
+
+            // Mild blur (projection diffusion). Using canvas filter; safe in modern Chrome/Safari.
+            const blurPx = Math.max(0, Math.min(3.0, this.data.blurPx));
+            this.ctx.save();
+            this.ctx.filter = blurPx > 0 ? `blur(${blurPx}px)` : 'none';
+
+            // Draw video scaled to canvas
+            this.ctx.globalAlpha = 1.0 - p;
+            this.ctx.drawImage(this.v, 0, 0, w, h);
+            this.ctx.restore();
+
+            // Luma cap by multiplying with gray (avoid pure white)
+            const cap = Math.max(0, Math.min(1, this.data.lumaCap));
+            if (cap < 0.999) {
+              const c = Math.round(cap * 255);
+              this.ctx.save();
+              this.ctx.globalCompositeOperation = 'multiply';
+              this.ctx.fillStyle = `rgb(${c},${c},${c})`;
+              this.ctx.fillRect(0, 0, w, h);
+              this.ctx.restore();
+            }
+
+            // Very subtle grain to mask codec blocks
+            const g = Math.max(0, Math.min(0.05, this.data.grain));
+            if (g > 0) {
+              const img = this.ctx.getImageData(0, 0, w, h);
+              const d = img.data;
+              // Sparse noise (every few pixels) for speed
+              const stride = 8; // tune for performance vs effect
+              const amp = Math.floor(g * 255);
+              let seed = (t|0) % 2147483647;
+              const rand = () => (seed = (seed * 48271) % 2147483647) / 2147483647;
+              for (let y = 0; y < h; y += stride) {
+                for (let x = 0; x < w; x += stride) {
+                  const i = (y * w + x) * 4;
+                  const n = ((rand() - 0.5) * amp) | 0;
+                  d[i] = Math.max(0, Math.min(255, d[i] + n));
+                  d[i+1] = Math.max(0, Math.min(255, d[i+1] + n));
+                  d[i+2] = Math.max(0, Math.min(255, d[i+2] + n));
+                }
+              }
+              this.ctx.putImageData(img, 0, 0);
+            }
+
+            this.tex.needsUpdate = true;
           }
         });
 
-        // Positional audio from <video> via WebAudio + Panner
+        // Positional audio from <video> via WebAudio + Panner (robust unlock)
         AFRAME.registerComponent('video-positional-audio', {
           schema: {
             video: { type: 'selector' },
@@ -285,6 +364,7 @@
                 this._panner.connect(this._gain);
                 this._gain.connect(this._ctx.destination);
 
+                // Element itself silent; WebAudio provides sound
                 this._video.muted = false;
                 this._video.volume = 0.0;
 
@@ -315,7 +395,7 @@
           }
         });
 
-        // Clamp pitch
+        // Clamp look pitch
         AFRAME.registerComponent('pitch-clamp', {
           schema: { min: { type: 'number', default: -80 }, max: { type: 'number', default: 80 } },
           tick: function () {
@@ -327,9 +407,10 @@
           }
         });
 
-        // Rig movement + collisions
+        // Custom rig movement + axis-separated collisions
         AFRAME.registerComponent('rig-walk', {
           schema: { speed: { type: 'number', default: 2.6 }, radius: { type: 'number', default: 0.28 } },
+
           init: function () {
             this.keys = Object.create(null);
             this._colliders = [];
@@ -343,6 +424,7 @@
 
             window.addEventListener('keydown', this._onKeyDown, { passive: false });
             window.addEventListener('keyup', this._onKeyUp, { passive: false });
+
             window.addEventListener('blur', this._clearKeys);
             document.addEventListener('visibilitychange', () => { if (document.hidden) this._clearKeys(); });
             document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement) this._clearKeys(); });
@@ -351,19 +433,25 @@
             if (scene.hasLoaded) this._refreshColliders();
             else scene.addEventListener('loaded', () => this._refreshColliders());
           },
-          _refreshColliders: function () { this._colliders = Array.from(this.el.sceneEl.querySelectorAll('.collider')); },
+
+          _refreshColliders: function () {
+            this._colliders = Array.from(this.el.sceneEl.querySelectorAll('.collider'));
+          },
+
           _getYaw: function () {
             const cam = document.getElementById('playerCam');
             const lc = cam && cam.components && cam.components['look-controls'];
             if (lc && lc.yawObject) return lc.yawObject.rotation.y;
             return cam ? cam.object3D.rotation.y : 0;
           },
+
           _aabbExpanded: function (el, radius) {
             const pos = el.object3D.getWorldPosition(this._tmpVec3);
             const w = parseFloat(el.getAttribute('width'))  || 1;
             const d = parseFloat(el.getAttribute('depth'))  || 1;
             return { minX: pos.x - w/2 - radius, maxX: pos.x + w/2 + radius, minZ: pos.z - d/2 - radius, maxZ: pos.z + d/2 + radius };
           },
+
           _resolveX: function (x, z, dx, radius) {
             let nx = x + dx;
             for (let i = 0; i < this._colliders.length; i++) {
@@ -372,6 +460,7 @@
             }
             return nx;
           },
+
           _resolveZ: function (x, z, dz, radius) {
             let nz = z + dz;
             for (let i = 0; i < this._colliders.length; i++) {
@@ -380,8 +469,12 @@
             }
             return nz;
           },
+
           tick: function (t, dt) {
-            if (t - this._lastColliderRefresh > 1500) { this._refreshColliders(); this._lastColliderRefresh = t; }
+            if (t - this._lastColliderRefresh > 1500) {
+              this._refreshColliders();
+              this._lastColliderRefresh = t;
+            }
 
             const dtS = Math.min(0.05, dt / 1000);
             const speed = this.data.speed;
@@ -409,6 +502,7 @@
             const moveZ = (rightZ * str + forwardZ * f) * speed * dtS;
 
             const pos = this.el.object3D.position;
+
             const nx = this._resolveX(pos.x, pos.z, moveX, r);
             const nz = this._resolveZ(nx, pos.z, moveZ, r);
 
