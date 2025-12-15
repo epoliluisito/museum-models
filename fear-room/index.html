@@ -60,23 +60,23 @@
     <a-plane position="21 0 27" rotation="-90 0 0" width="6" height="6"
       material="color: #060606; roughness: 1; metalness: 0"></a-plane>
 
-    <!-- Walls -->
+    <!-- Main chamber walls -->
     <a-box class="collider"
       position="-0.06 2 15"
       width="0.12" height="4" depth="30"
       material="color: #0B0B0B; roughness: 1; metalness: 0"></a-box>
 
-    <!-- Projection screen -->
+    <!-- projection_screen_station_1 -->
     <a-box
       id="projection_screen_station_1"
       class="architectural-object"
       position="-0.01 2.25 10.0"
       rotation="0 90 0"
       width="12.0" height="3.5" depth="0.02"
-      material="shader: standard; color: #0B0B0B; roughness: 0.9; metalness: 0.0; emissive: #000000; emissiveIntensity: 0.0"
-      screen-surface="src: #fearVideo; maxLuma: 0.85"
-      video-texture-tune
+      material="shader: projection-wall; src: #fearVideo; wallColor: #0B0B0B; lumaCap: 0.85; grain: 0.035; blur: 0.75"
       screen-always-video="video: #fearVideo; spillLight: #projectionSpill1"
+      video-positional-audio="video: #fearVideo; volume: 0.20; refDistance: 1.8; maxDistance: 18; rolloff: 1.2"
+      enforce-video-texture="video: #fearVideo"
     >
       <a-entity
         id="projectionSpill1"
@@ -183,36 +183,79 @@
         const DEG2RAD = Math.PI / 180;
         const EPS = 0.001;
 
-        // Audio: simplest + most reliable (especially Safari):
-        // keep video muted for autoplay, then unmute on first user gesture.
-        (function setupVideoAudioUnlock(){
-          const v = document.getElementById('fearVideo');
-          const unlock = () => {
-            if (!v) return;
-            try {
-              v.muted = false;
-              v.volume = 0.18; // low ambient level
-              const p = v.play();
-              if (p && p.catch) p.catch(() => {});
-            } catch (e) {}
-            window.removeEventListener('pointerdown', unlock);
-            window.removeEventListener('keydown', unlock);
-          };
-          window.addEventListener('pointerdown', unlock, { once: true });
-          window.addEventListener('keydown', unlock, { once: true });
-        })();
-
-        AFRAME.registerComponent('video-texture-tune', {
-          init: function () {
-            this._apply = this._apply.bind(this);
-            this.el.addEventListener('object3dset', this._apply);
-            this._apply();
+        // ===== Projection shader (masks macroblocks + feels like projection) =====
+        AFRAME.registerShader('projection-wall', {
+          schema: {
+            src: { type: 'map', is: 'uniform' },
+            wallColor: { type: 'color', is: 'uniform', default: '#0B0B0B' },
+            lumaCap: { type: 'number', is: 'uniform', default: 0.85 },
+            grain: { type: 'number', is: 'uniform', default: 0.03 },
+            blur: { type: 'number', is: 'uniform', default: 0.6 },
+            time: { type: 'time', is: 'uniform' },
+            texSize: { type: 'vec2', is: 'uniform', default: { x: 1536, y: 596 } }
           },
-          remove: function () { this.el.removeEventListener('object3dset', this._apply); },
-          _apply: function () {
+          vertexShader: `
+            varying vec2 vUv;
+            void main() {
+              vUv = uv;
+              gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+          `,
+          fragmentShader: `
+            precision mediump float;
+            uniform sampler2D src;
+            uniform vec3 wallColor;
+            uniform float lumaCap;
+            uniform float grain;
+            uniform float blur;
+            uniform float time;
+            uniform vec2 texSize;
+            varying vec2 vUv;
+
+            float rand(vec2 co){
+              return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453);
+            }
+
+            vec3 sampleVideo(vec2 uv){
+              return texture2D(src, uv).rgb;
+            }
+
+            void main() {
+              vec2 texel = vec2(1.0/texSize.x, 1.0/texSize.y) * blur;
+
+              // 5-tap blur
+              vec3 c0 = sampleVideo(vUv);
+              vec3 c1 = sampleVideo(vUv + vec2(texel.x, 0.0));
+              vec3 c2 = sampleVideo(vUv + vec2(-texel.x, 0.0));
+              vec3 c3 = sampleVideo(vUv + vec2(0.0, texel.y));
+              vec3 c4 = sampleVideo(vUv + vec2(0.0, -texel.y));
+              vec3 vid = (c0*0.55 + (c1+c2+c3+c4)*0.1125);
+
+              // Luma cap
+              vid *= clamp(lumaCap, 0.0, 1.0);
+
+              // Blend into wall for "projection" feel
+              float luma = dot(vid, vec3(0.299, 0.587, 0.114));
+              float projAmt = smoothstep(0.03, 0.72, luma);
+              vec3 outc = mix(wallColor, vid, projAmt);
+
+              // Grain to mask compression blocks
+              float g = (rand(vUv * (texSize * 0.25) + time * 0.001) - 0.5) * grain;
+              outc += g;
+
+              gl_FragColor = vec4(clamp(outc, 0.0, 1.0), 1.0);
+            }
+          `
+        });
+
+        // Enforce stable video texture sampling (continuous)
+        AFRAME.registerComponent('enforce-video-texture', {
+          schema: { video: { type: 'selector' } },
+          tick: function () {
             const mesh = this.el.getObject3D('mesh');
             if (!mesh || !mesh.material) return;
-            const map = mesh.material.map;
+            const mat = mesh.material;
+            const map = mat.map;
             if (!map) return;
             try {
               map.minFilter = THREE.LinearFilter;
@@ -220,50 +263,15 @@
               map.generateMipmaps = false;
               map.needsUpdate = true;
             } catch (e) {}
+
+            const v = this.data.video;
+            if (v && v.videoWidth && v.videoHeight && mat.uniforms && mat.uniforms.texSize) {
+              mat.uniforms.texSize.value.set(v.videoWidth, v.videoHeight);
+            }
           }
         });
 
-        AFRAME.registerComponent('screen-surface', {
-          schema: { src: { type: 'asset', default: '' }, maxLuma: { type: 'number', default: 0.85 } },
-          init: function () { this._apply(); },
-          update: function () { this._apply(); },
-          _apply: function () {
-            const mesh = this.el.getObject3D('mesh');
-            if (!mesh) {
-              this.el.addEventListener('object3dset', () => this._apply(), { once: true });
-              return;
-            }
-            const src = this.data.src;
-            const maxL = Math.max(0.0, Math.min(1.0, this.data.maxLuma));
-            const cap = `rgb(${Math.round(maxL * 255)}, ${Math.round(maxL * 255)}, ${Math.round(maxL * 255)})`;
-
-            if (!src) {
-              this.el.setAttribute('material', {
-                shader: 'standard',
-                color: '#0B0B0B',
-                roughness: 0.9,
-                metalness: 0.0,
-                emissive: '#000000',
-                emissiveIntensity: 0.0
-              });
-              return;
-            }
-
-            this.el.setAttribute('material', {
-              shader: 'standard',
-              src: src,
-              color: cap,
-              roughness: 0.92,
-              metalness: 0.0,
-              emissive: '#000000',
-              emissiveIntensity: 0.0
-            });
-
-            const m = mesh.material;
-            if (m) m.toneMapped = false;
-          }
-        });
-
+        // Always-on video playback (no click-to-stop)
         AFRAME.registerComponent('screen-always-video', {
           schema: { video: { type: 'selector' }, spillLight: { type: 'selector' } },
           init: function () {
@@ -271,6 +279,7 @@
             this._setSpill(true);
             this._startVideo();
             window.addEventListener('pointerdown', () => this._startVideo(), { once: true });
+            window.addEventListener('keydown', () => this._startVideo(), { once: true });
           },
           _setSpill: function (on) {
             const spill = this.data.spillLight;
@@ -284,12 +293,89 @@
             try {
               this._videoEl.loop = true;
               this._videoEl.playsInline = true;
+              this._videoEl.muted = true; // keep muted until WebAudio unlock
               const p = this._videoEl.play();
               if (p && p.catch) p.catch(() => {});
             } catch (e) {}
           }
         });
 
+        // Positional audio from <video> via WebAudio + Panner
+        AFRAME.registerComponent('video-positional-audio', {
+          schema: {
+            video: { type: 'selector' },
+            volume: { type: 'number', default: 0.18 },
+            refDistance: { type: 'number', default: 1.8 },
+            maxDistance: { type: 'number', default: 18.0 },
+            rolloff: { type: 'number', default: 1.2 }
+          },
+          init: function () {
+            this._video = this.data.video;
+            this._ctx = null;
+            this._panner = null;
+            this._gain = null;
+            this._src = null;
+            this._ready = false;
+            this._tmp = new THREE.Vector3();
+
+            this._unlock = () => {
+              if (this._ready || !this._video) return;
+              const AudioCtx = window.AudioContext || window.webkitAudioContext;
+              if (!AudioCtx) return;
+
+              try {
+                this._ctx = new AudioCtx();
+
+                this._panner = this._ctx.createPanner();
+                this._panner.panningModel = 'HRTF';
+                this._panner.distanceModel = 'inverse';
+                this._panner.refDistance = this.data.refDistance;
+                this._panner.maxDistance = this.data.maxDistance;
+                this._panner.rolloffFactor = this.data.rolloff;
+
+                this._gain = this._ctx.createGain();
+                this._gain.gain.value = this.data.volume;
+
+                this._src = this._ctx.createMediaElementSource(this._video);
+                this._src.connect(this._panner);
+                this._panner.connect(this._gain);
+                this._gain.connect(this._ctx.destination);
+
+                // Element itself silent; WebAudio provides sound
+                this._video.muted = false;
+                this._video.volume = 0.0;
+
+                const p = this._video.play();
+                if (p && p.catch) p.catch(() => {});
+                if (this._ctx.state === 'suspended') this._ctx.resume().catch(() => {});
+
+                this._ready = true;
+              } catch (e) {
+                this._ready = false;
+              }
+            };
+
+            // Start audio on: click OR key OR pointer lock acquired.
+            window.addEventListener('pointerdown', this._unlock, { once: true });
+            window.addEventListener('keydown', this._unlock, { once: true });
+            document.addEventListener('pointerlockchange', () => {
+              if (document.pointerLockElement) this._unlock();
+            });
+          },
+          tick: function () {
+            if (!this._ready || !this._panner) return;
+            const p = this.el.object3D.getWorldPosition(this._tmp);
+            if (this._panner.positionX) {
+              this._panner.positionX.value = p.x;
+              this._panner.positionY.value = p.y;
+              this._panner.positionZ.value = p.z;
+            } else {
+              this._panner.setPosition(p.x, p.y, p.z);
+            }
+          }
+        });
+
+        // Clamp pitch
         AFRAME.registerComponent('pitch-clamp', {
           schema: { min: { type: 'number', default: -80 }, max: { type: 'number', default: 80 } },
           tick: function () {
@@ -297,14 +383,13 @@
             if (!lc || !lc.pitchObject) return;
             const minR = this.data.min * DEG2RAD;
             const maxR = this.data.max * DEG2RAD;
-            const p = lc.pitchObject.rotation.x;
-            lc.pitchObject.rotation.x = Math.min(maxR, Math.max(minR, p));
+            lc.pitchObject.rotation.x = Math.min(maxR, Math.max(minR, lc.pitchObject.rotation.x));
           }
         });
 
+        // Rig movement + collisions
         AFRAME.registerComponent('rig-walk', {
           schema: { speed: { type: 'number', default: 2.6 }, radius: { type: 'number', default: 0.28 } },
-
           init: function () {
             this.keys = Object.create(null);
             this._colliders = [];
@@ -326,23 +411,19 @@
             if (scene.hasLoaded) this._refreshColliders();
             else scene.addEventListener('loaded', () => this._refreshColliders());
           },
-
           _refreshColliders: function () { this._colliders = Array.from(this.el.sceneEl.querySelectorAll('.collider')); },
-
           _getYaw: function () {
             const cam = document.getElementById('playerCam');
             const lc = cam && cam.components && cam.components['look-controls'];
             if (lc && lc.yawObject) return lc.yawObject.rotation.y;
             return cam ? cam.object3D.rotation.y : 0;
           },
-
           _aabbExpanded: function (el, radius) {
             const pos = el.object3D.getWorldPosition(this._tmpVec3);
             const w = parseFloat(el.getAttribute('width'))  || 1;
             const d = parseFloat(el.getAttribute('depth'))  || 1;
             return { minX: pos.x - w/2 - radius, maxX: pos.x + w/2 + radius, minZ: pos.z - d/2 - radius, maxZ: pos.z + d/2 + radius };
           },
-
           _resolveX: function (x, z, dx, radius) {
             let nx = x + dx;
             for (let i = 0; i < this._colliders.length; i++) {
@@ -351,7 +432,6 @@
             }
             return nx;
           },
-
           _resolveZ: function (x, z, dz, radius) {
             let nz = z + dz;
             for (let i = 0; i < this._colliders.length; i++) {
@@ -360,7 +440,6 @@
             }
             return nz;
           },
-
           tick: function (t, dt) {
             if (t - this._lastColliderRefresh > 1500) { this._refreshColliders(); this._lastColliderRefresh = t; }
 
