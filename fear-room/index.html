@@ -25,7 +25,6 @@
     vr-mode-ui="enabled: false"
   >
     <a-assets>
-      <!-- Put MP4 at fear-room/video/test-video.mp4 -->
       <video
         id="fearVideo"
         src="video/test-video.mp4"
@@ -39,7 +38,7 @@
       ></video>
     </a-assets>
 
-    <!-- Lighting (neutral “gallery”) -->
+    <!-- Lighting -->
     <a-entity light="type: ambient; intensity: 0.65; color: #ffffff"></a-entity>
     <a-entity light="type: directional; intensity: 0.85; color: #ffffff" position="6 10 8"></a-entity>
     <a-entity light="type: directional; intensity: 0.55; color: #ffffff" position="-8 9 -10"></a-entity>
@@ -47,46 +46,44 @@
     <!-- Floors & ceilings -->
     <a-plane position="9 0 15" rotation="-90 0 0" width="18" height="30"
       material="color: #060606; roughness: 1; metalness: 0"></a-plane>
-
     <a-plane position="9 6 15" rotation="90 0 0" width="18" height="30"
       material="color: #111111; roughness: 1; metalness: 0; side: double"></a-plane>
 
     <a-plane position="9 0 -4" rotation="-90 0 0" width="3" height="8"
       material="color: #060606; roughness: 1; metalness: 0"></a-plane>
-
     <a-plane position="9 2.2 -4" rotation="90 0 0" width="3" height="8"
       material="color: #111111; roughness: 1; metalness: 0; side: double"></a-plane>
 
     <a-plane position="21 0 27" rotation="-90 0 0" width="6" height="6"
       material="color: #060606; roughness: 1; metalness: 0"></a-plane>
 
-    <!-- Main chamber walls -->
+    <!-- West wall -->
     <a-box class="collider"
       position="-0.06 2 15"
       width="0.12" height="4" depth="30"
       material="color: #0B0B0B; roughness: 1; metalness: 0"></a-box>
 
-    <!-- projection_screen_station_1
-         "Trick": make it physically small (12m -> 0.24m) so it occupies fewer screen pixels on a monitor. -->
+    <!-- projection_screen_station_1 (6m wide) -->
     <a-box
       id="projection_screen_station_1"
       class="architectural-object"
-      position="-0.01 2.25 10.0"
+      position="-0.059 2.25 10.0"
       rotation="0 90 0"
-      width="0.24" height="0.07" depth="0.02"
-      material="shader: standard; color: #D9D9D9; roughness: 0.96; metalness: 0.0; emissive: #000000; emissiveIntensity: 0.0"
+      width="6.0" height="3.5" depth="0.02"
+      material="shader: standard; color: #0B0B0B; roughness: 0.9; metalness: 0.0; emissive: #000000; emissiveIntensity: 0.0"
+      screen-material-switch="video: #fearVideo; inactiveColor: #0B0B0B; activeColor: #D9D9D9"
       video-canvas-texture="video: #fearVideo; canvasWidth: 3072; canvasHeight: 1192; blurPx: 0.9; persistence: 0.18; lumaCap: 0.85; grain: 0.018"
       screen-always-video="video: #fearVideo; spillLight: #projectionSpill1"
-      video-positional-audio="video: #fearVideo; volume: 0.22; refDistance: 1.2; maxDistance: 10; rolloff: 1.25"
+      video-positional-audio="video: #fearVideo; volume: 0.22; refDistance: 1.8; maxDistance: 18; rolloff: 1.2"
     >
-      <!-- Keep spill extremely subtle since the surface is now tiny -->
       <a-entity
         id="projectionSpill1"
         position="0.20 0 0"
-        light="type: spot; color: #ffffff; intensity: 0.03; angle: 38; penumbra: 0.9; distance: 4.0; decay: 2; castShadow: false"
+        light="type: spot; color: #ffffff; intensity: 0.10; angle: 48; penumbra: 0.85; distance: 7.5; decay: 2; castShadow: false"
       ></a-entity>
     </a-box>
 
+    <!-- Other main chamber walls -->
     <a-box class="collider"
       position="9 2 30.06"
       width="18" height="4" depth="0.12"
@@ -166,12 +163,12 @@
       width="8" height="4" depth="3"
       material="color: #0B0B0B; roughness: 1; metalness: 0"></a-box>
 
-    <!-- Player Rig (spawn right in front of the screen, facing it) -->
-    <a-entity id="rig" position="0.55 0 10.0" rig-walk="speed: 2.6; radius: 0.28">
+    <!-- Player rig (in front of screen) -->
+    <a-entity id="rig" position="1.2 0 10.0" rig-walk="speed: 2.6; radius: 0.28">
       <a-entity
         id="playerCam"
         position="0 1.6 0"
-        rotation="0 270 0"
+        rotation="0 90 0"
         camera="fov: 60; near: 0.05; far: 1000"
         look-controls="pointerLockEnabled: true"
         pitch-clamp="min: -80; max: 80"
@@ -184,6 +181,30 @@
       (function () {
         const DEG2RAD = Math.PI / 180;
         const EPS = 0.001;
+
+        // Switch material color to allow video map to be visible (A-Frame multiplies map by color).
+        AFRAME.registerComponent('screen-material-switch', {
+          schema: {
+            video: { type: 'selector' },
+            inactiveColor: { type: 'color', default: '#0B0B0B' },
+            activeColor: { type: 'color', default: '#D9D9D9' }
+          },
+          init: function () {
+            this._active = false;
+            this._apply(false);
+          },
+          _apply: function (on) {
+            this.el.setAttribute('material', 'color', on ? this.data.activeColor : this.data.inactiveColor);
+            this._active = on;
+          },
+          tick: function () {
+            const v = this.data.video;
+            if (!v) return;
+            const hasFrame = (v.readyState >= 2) && (v.currentTime > 0 || !isNaN(v.duration));
+            if (hasFrame && !this._active) this._apply(true);
+            if (!hasFrame && this._active) this._apply(false);
+          }
+        });
 
         AFRAME.registerComponent('screen-always-video', {
           schema: { video: { type: 'selector' }, spillLight: { type: 'selector' } },
@@ -213,6 +234,7 @@
           }
         });
 
+        // Video -> canvas texture (upscale + projection-like stability)
         AFRAME.registerComponent('video-canvas-texture', {
           schema: {
             video: { type: 'selector' },
@@ -231,6 +253,7 @@
             this.ctx = this.canvas.getContext('2d', { alpha: false, desynchronized: true });
             this.ctx.imageSmoothingEnabled = true;
             this.ctx.imageSmoothingQuality = 'high';
+
             this.tex = new THREE.CanvasTexture(this.canvas);
             this.tex.minFilter = THREE.LinearFilter;
             this.tex.magFilter = THREE.LinearFilter;
@@ -257,7 +280,6 @@
             const w = this.canvas.width, h = this.canvas.height;
 
             const p = Math.max(0, Math.min(0.45, this.data.persistence));
-            // fade previous frame slightly (afterglow)
             this.ctx.save();
             this.ctx.globalCompositeOperation = 'source-over';
             this.ctx.globalAlpha = p;
@@ -306,6 +328,7 @@
           }
         });
 
+        // Positional audio via WebAudio
         AFRAME.registerComponent('video-positional-audio', {
           schema: {
             video: { type: 'selector' },
@@ -330,6 +353,7 @@
 
               try {
                 this._ctx = new AudioCtx();
+
                 this._panner = this._ctx.createPanner();
                 this._panner.panningModel = 'HRTF';
                 this._panner.distanceModel = 'inverse';
@@ -374,6 +398,7 @@
           }
         });
 
+        // Clamp look pitch
         AFRAME.registerComponent('pitch-clamp', {
           schema: { min: { type: 'number', default: -80 }, max: { type: 'number', default: 80 } },
           tick: function () {
@@ -385,6 +410,7 @@
           }
         });
 
+        // Custom rig movement + collisions
         AFRAME.registerComponent('rig-walk', {
           schema: { speed: { type: 'number', default: 2.6 }, radius: { type: 'number', default: 0.28 } },
           init: function () {
