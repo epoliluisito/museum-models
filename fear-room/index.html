@@ -17,7 +17,7 @@
   </style>
 </head>
 <body>
-  <div id="hint"><b>Click</b> to lock mouse • <b>WASD / Arrows</b> move • <b>Mouse</b> look</div>
+  <div id="hint"><b>Click once</b> anywhere to enable audio • <b>WASD / Arrows</b> move • <b>Mouse</b> look</div>
 
   <a-scene
     renderer="antialias: true; colorManagement: true;"
@@ -25,7 +25,7 @@
     vr-mode-ui="enabled: false"
   >
     <a-assets>
-      <!-- GitHub Pages-friendly relative URL (put MP4 at fear-room/video/test-video.mp4) -->
+      <!-- Video (place at fear-room/video/test-video.mp4) -->
       <video
         id="fearVideo"
         src="video/test-video.mp4"
@@ -37,6 +37,12 @@
         playsinline
         webkit-playsinline
       ></video>
+
+      <!-- Audio (preferred: fear-room/audio/test-audio.mp3). Fallback: use MP4 audio track. -->
+      <audio id="fearAudio" crossorigin="anonymous" preload="auto" loop>
+        <source src="audio/test-audio.mp3" type="audio/mpeg" />
+        <source src="video/test-video.mp4" type="audio/mp4" />
+      </audio>
     </a-assets>
 
     <!-- Lighting (neutral “gallery”) -->
@@ -45,62 +51,28 @@
     <a-entity light="type: directional; intensity: 0.55; color: #ffffff" position="-8 9 -10"></a-entity>
 
     <!-- ===== Geometry: Floors & Ceilings ===== -->
+    <a-plane position="9 0 15" rotation="-90 0 0" width="18" height="30"
+      material="color: #060606; roughness: 1; metalness: 0"></a-plane>
 
-    <!-- Main chamber floor (18 x 30), origin at SW corner (0,0) of main -->
-    <a-plane
-      position="9 0 15"
-      rotation="-90 0 0"
-      width="18"
-      height="30"
-      material="color: #060606; roughness: 1; metalness: 0"
-    ></a-plane>
+    <a-plane position="9 6 15" rotation="90 0 0" width="18" height="30"
+      material="color: #111111; roughness: 1; metalness: 0; side: double"></a-plane>
 
-    <!-- Main chamber ceiling at y=6 -->
-    <a-plane
-      position="9 6 15"
-      rotation="90 0 0"
-      width="18"
-      height="30"
-      material="color: #111111; roughness: 1; metalness: 0; side: double"
-    ></a-plane>
+    <a-plane position="9 0 -4" rotation="-90 0 0" width="3" height="8"
+      material="color: #060606; roughness: 1; metalness: 0"></a-plane>
 
-    <!-- Threshold corridor floor (3 x 8), attached south, centered -->
-    <a-plane
-      position="9 0 -4"
-      rotation="-90 0 0"
-      width="3"
-      height="8"
-      material="color: #060606; roughness: 1; metalness: 0"
-    ></a-plane>
+    <a-plane position="9 2.2 -4" rotation="90 0 0" width="3" height="8"
+      material="color: #111111; roughness: 1; metalness: 0; side: double"></a-plane>
 
-    <!-- Corridor soffit ceiling at y=2.2 -->
-    <a-plane
-      position="9 2.2 -4"
-      rotation="90 0 0"
-      width="3"
-      height="8"
-      material="color: #111111; roughness: 1; metalness: 0; side: double"
-    ></a-plane>
-
-    <!-- Optional outside exit pad (6 x 6), east-north side -->
-    <a-plane
-      position="21 0 27"
-      rotation="-90 0 0"
-      width="6"
-      height="6"
-      material="color: #060606; roughness: 1; metalness: 0"
-    ></a-plane>
+    <a-plane position="21 0 27" rotation="-90 0 0" width="6" height="6"
+      material="color: #060606; roughness: 1; metalness: 0"></a-plane>
 
     <!-- ===== Colliders: Walls ===== -->
-
-    <!-- Main chamber perimeter walls (height 4, thickness 0.12) -->
     <a-box class="collider"
       position="-0.06 2 15"
       width="0.12" height="4" depth="30"
-      material="color: #0B0B0B; roughness: 1; metalness: 0"
-    ></a-box>
+      material="color: #0B0B0B; roughness: 1; metalness: 0"></a-box>
 
-    <!-- projection_screen_station_1 (flush to the inner face so it is visible) -->
+    <!-- Projection screen (addressable by id) -->
     <a-box
       id="projection_screen_station_1"
       class="architectural-object"
@@ -109,9 +81,10 @@
       width="12.0" height="3.5" depth="0.02"
       material="shader: standard; color: #0B0B0B; roughness: 0.9; metalness: 0.0; emissive: #000000; emissiveIntensity: 0.0"
       screen-surface="src: #fearVideo; maxLuma: 0.85"
+      video-texture-tune
       screen-always-video="video: #fearVideo; spillLight: #projectionSpill1"
+      sound="src: #fearAudio; autoplay: false; loop: true; positional: true; volume: 0.16; distanceModel: inverse; refDistance: 1.8; maxDistance: 18; rolloffFactor: 1.2"
     >
-      <!-- Subtle “projection spill” light (very low intensity, distance falloff) -->
       <a-entity
         id="projectionSpill1"
         position="0.20 0 0"
@@ -122,108 +95,84 @@
     <a-box class="collider"
       position="9 2 30.06"
       width="18" height="4" depth="0.12"
-      material="color: #0B0B0B; roughness: 1; metalness: 0"
-    ></a-box>
+      material="color: #0B0B0B; roughness: 1; metalness: 0"></a-box>
 
     <a-box class="collider"
       position="4 2 -0.06"
       width="8" height="4" depth="0.12"
-      material="color: #0B0B0B; roughness: 1; metalness: 0"
-    ></a-box>
+      material="color: #0B0B0B; roughness: 1; metalness: 0"></a-box>
     <a-box class="collider"
       position="14 2 -0.06"
       width="8" height="4" depth="0.12"
-      material="color: #0B0B0B; roughness: 1; metalness: 0"
-    ></a-box>
+      material="color: #0B0B0B; roughness: 1; metalness: 0"></a-box>
 
     <a-box class="collider"
       position="18.06 2 12"
       width="0.12" height="4" depth="24"
-      material="color: #0B0B0B; roughness: 1; metalness: 0"
-    ></a-box>
+      material="color: #0B0B0B; roughness: 1; metalness: 0"></a-box>
 
-    <!-- Threshold corridor walls (height 2.2, thickness 0.12) -->
+    <!-- Corridor -->
     <a-box class="collider"
       position="7.44 1.1 -4"
       width="0.12" height="2.2" depth="8"
-      material="color: #0B0B0B; roughness: 1; metalness: 0"
-    ></a-box>
+      material="color: #0B0B0B; roughness: 1; metalness: 0"></a-box>
     <a-box class="collider"
       position="10.56 1.1 -4"
       width="0.12" height="2.2" depth="8"
-      material="color: #0B0B0B; roughness: 1; metalness: 0"
-    ></a-box>
+      material="color: #0B0B0B; roughness: 1; metalness: 0"></a-box>
     <a-box class="collider"
       position="9 1.1 -8.06"
       width="3" height="2.2" depth="0.12"
-      material="color: #0B0B0B; roughness: 1; metalness: 0"
-    ></a-box>
+      material="color: #0B0B0B; roughness: 1; metalness: 0"></a-box>
 
-    <!-- Station 3 listening booths block (open on west side), inside main -->
+    <!-- Station 3 -->
     <a-box class="collider"
       position="15.75 1.5 6.06"
       width="4.5" height="3" depth="0.12"
-      material="color: #0B0B0B; roughness: 1; metalness: 0"
-    ></a-box>
+      material="color: #0B0B0B; roughness: 1; metalness: 0"></a-box>
     <a-box class="collider"
       position="15.75 1.5 15.94"
       width="4.5" height="3" depth="0.12"
-      material="color: #0B0B0B; roughness: 1; metalness: 0"
-    ></a-box>
+      material="color: #0B0B0B; roughness: 1; metalness: 0"></a-box>
     <a-box class="collider"
       position="17.94 1.5 11"
       width="0.12" height="3" depth="10"
-      material="color: #0B0B0B; roughness: 1; metalness: 0"
-    ></a-box>
+      material="color: #0B0B0B; roughness: 1; metalness: 0"></a-box>
 
-    <!-- Final Void enclosure (3-sided) -->
+    <!-- Final Void -->
     <a-box class="collider"
       position="5.06 1.6 25"
       width="0.12" height="3.2" depth="6"
-      material="color: #0B0B0B; roughness: 1; metalness: 0"
-    ></a-box>
-
+      material="color: #0B0B0B; roughness: 1; metalness: 0"></a-box>
     <a-box class="collider"
       position="12.94 1.6 23.85"
       width="0.12" height="3.2" depth="3.7"
-      material="color: #0B0B0B; roughness: 1; metalness: 0"
-    ></a-box>
+      material="color: #0B0B0B; roughness: 1; metalness: 0"></a-box>
     <a-box class="collider"
       position="12.94 1.6 27.65"
       width="0.12" height="3.2" depth="0.7"
-      material="color: #0B0B0B; roughness: 1; metalness: 0"
-    ></a-box>
-
+      material="color: #0B0B0B; roughness: 1; metalness: 0"></a-box>
     <a-box class="collider"
       position="9 1.6 27.94"
       width="8" height="3.2" depth="0.12"
-      material="color: #0B0B0B; roughness: 1; metalness: 0"
-    ></a-box>
-
+      material="color: #0B0B0B; roughness: 1; metalness: 0"></a-box>
     <a-box class="collider"
       position="8.34 1.6 21.5"
       width="0.12" height="3.2" depth="1.0"
-      material="color: #0B0B0B; roughness: 1; metalness: 0"
-    ></a-box>
+      material="color: #0B0B0B; roughness: 1; metalness: 0"></a-box>
     <a-box class="collider"
       position="9.66 1.6 21.5"
       width="0.12" height="3.2" depth="1.0"
-      material="color: #0B0B0B; roughness: 1; metalness: 0"
-    ></a-box>
+      material="color: #0B0B0B; roughness: 1; metalness: 0"></a-box>
 
-    <!-- Station 4 (axis-aligned approximation of angled wall) -->
+    <!-- Station 4 -->
     <a-box class="collider"
       position="7 2 19.5"
       width="8" height="4" depth="3"
-      material="color: #0B0B0B; roughness: 1; metalness: 0"
-    ></a-box>
+      material="color: #0B0B0B; roughness: 1; metalness: 0"></a-box>
 
-    <!-- ===== Player Rig (spawn in front of projection screen) ===== -->
-    <a-entity
-      id="rig"
-      position="2.6 0 10.0"
-      rig-walk="speed: 2.6; radius: 0.28"
-    >
+    <!-- Player Rig -->
+    <a-entity id="rig" position="2.6 0 10.0" rig-walk="speed: 2.6; radius: 0.28">
       <a-entity
         id="playerCam"
         position="0 1.6 0"
@@ -231,15 +180,38 @@
         camera="fov: 60; near: 0.05; far: 1000"
         look-controls="pointerLockEnabled: true"
         pitch-clamp="min: -80; max: 80"
-      >
-        <a-entity cursor="rayOrigin: mouse"></a-entity>
-      </a-entity>
+      ></a-entity>
     </a-entity>
 
     <script>
       (function () {
         const DEG2RAD = Math.PI / 180;
         const EPS = 0.001;
+
+        AFRAME.registerComponent('video-texture-tune', {
+          init: function () {
+            this._apply = this._apply.bind(this);
+            this.el.addEventListener('object3dset', this._apply);
+            this._apply();
+          },
+          remove: function () { this.el.removeEventListener('object3dset', this._apply); },
+          _apply: function () {
+            const mesh = this.el.getObject3D('mesh');
+            if (!mesh || !mesh.material) return;
+            const mat = mesh.material;
+            const map = mat.map;
+            if (!map) return;
+            try {
+              map.minFilter = THREE.LinearFilter;
+              map.magFilter = THREE.LinearFilter;
+              map.generateMipmaps = false;
+              const r = this.el.sceneEl && this.el.sceneEl.renderer;
+              const maxA = r && r.capabilities && r.capabilities.getMaxAnisotropy ? r.capabilities.getMaxAnisotropy() : 1;
+              map.anisotropy = Math.min(8, maxA || 1);
+              map.needsUpdate = true;
+            } catch (e) {}
+          }
+        });
 
         AFRAME.registerComponent('screen-surface', {
           schema: { src: { type: 'asset', default: '' }, maxLuma: { type: 'number', default: 0.85 } },
@@ -251,7 +223,6 @@
               this.el.addEventListener('object3dset', () => this._apply(), { once: true });
               return;
             }
-
             const src = this.data.src;
             const maxL = Math.max(0.0, Math.min(1.0, this.data.maxLuma));
             const cap = `rgb(${Math.round(maxL * 255)}, ${Math.round(maxL * 255)}, ${Math.round(maxL * 255)})`;
@@ -283,7 +254,6 @@
           }
         });
 
-        // Always-on video playback (no click interaction).
         AFRAME.registerComponent('screen-always-video', {
           schema: { video: { type: 'selector' }, spillLight: { type: 'selector' } },
           init: function () {
@@ -291,7 +261,17 @@
             this._setSpill(true);
             this._startVideo();
 
-            // Retry play on first gesture to satisfy autoplay quirks (even though muted).
+            const startAudioOnce = () => {
+              const snd = this.el.components.sound;
+              if (snd && !snd.isPlaying) {
+                try { snd.playSound(); } catch (e) {}
+              }
+              window.removeEventListener('pointerdown', startAudioOnce);
+              window.removeEventListener('keydown', startAudioOnce);
+            };
+            window.addEventListener('pointerdown', startAudioOnce, { once: true });
+            window.addEventListener('keydown', startAudioOnce, { once: true });
+
             window.addEventListener('pointerdown', () => this._startVideo(), { once: true });
           },
           _setSpill: function (on) {
@@ -327,31 +307,19 @@
 
         AFRAME.registerComponent('rig-walk', {
           schema: { speed: { type: 'number', default: 2.6 }, radius: { type: 'number', default: 0.28 } },
-
           init: function () {
             this.keys = Object.create(null);
             this._colliders = [];
             this._tmpVec3 = new THREE.Vector3();
             this._lastColliderRefresh = 0;
 
-            const MOVE_KEYS = new Set([
-              'KeyW','KeyA','KeyS','KeyD',
-              'ArrowUp','ArrowLeft','ArrowDown','ArrowRight'
-            ]);
-
-            this._onKeyDown = (e) => {
-              if (MOVE_KEYS.has(e.code)) e.preventDefault();
-              this.keys[e.code] = true;
-            };
-            this._onKeyUp = (e) => {
-              if (MOVE_KEYS.has(e.code)) e.preventDefault();
-              this.keys[e.code] = false;
-            };
+            const MOVE_KEYS = new Set(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowLeft','ArrowDown','ArrowRight']);
+            this._onKeyDown = (e) => { if (MOVE_KEYS.has(e.code)) e.preventDefault(); this.keys[e.code] = true; };
+            this._onKeyUp = (e) => { if (MOVE_KEYS.has(e.code)) e.preventDefault(); this.keys[e.code] = false; };
             this._clearKeys = () => { for (const k in this.keys) this.keys[k] = false; };
 
             window.addEventListener('keydown', this._onKeyDown, { passive: false });
             window.addEventListener('keyup', this._onKeyUp, { passive: false });
-
             window.addEventListener('blur', this._clearKeys);
             document.addEventListener('visibilitychange', () => { if (document.hidden) this._clearKeys(); });
             document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement) this._clearKeys(); });
@@ -360,59 +328,37 @@
             if (scene.hasLoaded) this._refreshColliders();
             else scene.addEventListener('loaded', () => this._refreshColliders());
           },
-
-          _refreshColliders: function () {
-            this._colliders = Array.from(this.el.sceneEl.querySelectorAll('.collider'));
-          },
-
+          _refreshColliders: function () { this._colliders = Array.from(this.el.sceneEl.querySelectorAll('.collider')); },
           _getYaw: function () {
             const cam = document.getElementById('playerCam');
             const lc = cam && cam.components && cam.components['look-controls'];
             if (lc && lc.yawObject) return lc.yawObject.rotation.y;
             return cam ? cam.object3D.rotation.y : 0;
           },
-
           _aabbExpanded: function (el, radius) {
             const pos = el.object3D.getWorldPosition(this._tmpVec3);
-            const w = parseFloat(el.getAttribute('width'))  || 1;
-            const d = parseFloat(el.getAttribute('depth'))  || 1;
-            return {
-              minX: pos.x - w / 2 - radius,
-              maxX: pos.x + w / 2 + radius,
-              minZ: pos.z - d / 2 - radius,
-              maxZ: pos.z + d / 2 + radius
-            };
+            const w = parseFloat(el.getAttribute('width')) || 1;
+            const d = parseFloat(el.getAttribute('depth')) || 1;
+            return { minX: pos.x - w/2 - radius, maxX: pos.x + w/2 + radius, minZ: pos.z - d/2 - radius, maxZ: pos.z + d/2 + radius };
           },
-
           _resolveX: function (x, z, dx, radius) {
             let nx = x + dx;
             for (let i = 0; i < this._colliders.length; i++) {
-              const aabb = this._aabbExpanded(this._colliders[i], radius);
-              if (nx > aabb.minX && nx < aabb.maxX && z > aabb.minZ && z < aabb.maxZ) {
-                if (dx > 0) nx = aabb.minX - EPS;
-                else if (dx < 0) nx = aabb.maxX + EPS;
-              }
+              const a = this._aabbExpanded(this._colliders[i], radius);
+              if (nx > a.minX && nx < a.maxX && z > a.minZ && z < a.maxZ) nx = (dx > 0) ? (a.minX - EPS) : (a.maxX + EPS);
             }
             return nx;
           },
-
           _resolveZ: function (x, z, dz, radius) {
             let nz = z + dz;
             for (let i = 0; i < this._colliders.length; i++) {
-              const aabb = this._aabbExpanded(this._colliders[i], radius);
-              if (x > aabb.minX && x < aabb.maxX && nz > aabb.minZ && nz < aabb.maxZ) {
-                if (dz > 0) nz = aabb.minZ - EPS;
-                else if (dz < 0) nz = aabb.maxZ + EPS;
-              }
+              const a = this._aabbExpanded(this._colliders[i], radius);
+              if (x > a.minX && x < a.maxX && nz > a.minZ && nz < a.maxZ) nz = (dz > 0) ? (a.minZ - EPS) : (a.maxZ + EPS);
             }
             return nz;
           },
-
           tick: function (t, dt) {
-            if (t - this._lastColliderRefresh > 1500) {
-              this._refreshColliders();
-              this._lastColliderRefresh = t;
-            }
+            if (t - this._lastColliderRefresh > 1500) { this._refreshColliders(); this._lastColliderRefresh = t; }
 
             const dtS = Math.min(0.05, dt / 1000);
             const speed = this.data.speed;
@@ -431,9 +377,7 @@
             if (mag > 1e-6) { str /= mag; f /= mag; }
 
             const yaw = this._getYaw();
-            const sin = Math.sin(yaw);
-            const cos = Math.cos(yaw);
-
+            const sin = Math.sin(yaw), cos = Math.cos(yaw);
             const forwardX = -sin, forwardZ = -cos;
             const rightX = cos, rightZ = -sin;
 
@@ -441,12 +385,9 @@
             const moveZ = (rightZ * str + forwardZ * f) * speed * dtS;
 
             const pos = this.el.object3D.position;
-
             const nx = this._resolveX(pos.x, pos.z, moveX, r);
             const nz = this._resolveZ(nx, pos.z, moveZ, r);
-
-            pos.x = nx;
-            pos.z = nz;
+            pos.x = nx; pos.z = nz;
           }
         });
       })();
