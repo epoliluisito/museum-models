@@ -1923,10 +1923,16 @@ AFRAME.registerComponent('initial-yaw', {
           },
           _refreshColliders: function () { this._colliders = Array.from(this.el.sceneEl.querySelectorAll('.collider')); },
           _getYaw: function () {
-            const cam = document.getElementById('playerCam');
-            const lc = cam && cam.components && cam.components['look-controls'];
-            if (lc && lc.yawObject) return lc.yawObject.rotation.y;
-            return cam ? cam.object3D.rotation.y : 0;
+            const camEl = document.getElementById('playerCam');
+            if (!camEl || !camEl.object3D) return 0;
+
+            // World-space yaw so movement always matches where you're looking,
+            // even if the rig (parent) has rotation.
+            const q = new THREE.Quaternion();
+            const e = new THREE.Euler();
+            camEl.object3D.getWorldQuaternion(q);
+            e.setFromQuaternion(q, 'YXZ');
+            return e.y;
           },
           _aabbExpanded: function (el, radius) {
             const pos = el.object3D.getWorldPosition(this._tmpVec3);
