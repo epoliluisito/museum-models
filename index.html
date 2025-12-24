@@ -485,6 +485,7 @@ AFRAME.registerComponent('light-beam', {
   }
 </style>
 
+<link rel="icon" href="data:,">
 </head>
 <body>
 
@@ -506,14 +507,14 @@ AFRAME.registerComponent('light-beam', {
 <div id="hint" style="display:none"></div>
 <div class="overlay grain"></div>
 <a-scene tabindex="0" background="color: #020202" fog="type: exponential; color: #050505; density: 0.00022" renderer="antialias: true; colorManagement: true; physicallyCorrectLights: true; exposure: 0.92; highRefreshRate: true;" s4-mercury-manager="" shadow="type: pcfsoft; autoUpdate: true;" vr-mode-ui="enabled: false">
-<a-assets>
+<a-assets timeout="3000">
 <video autoplay="" crossorigin="anonymous" id="fearVideo" loop="" playsinline="" preload="metadata" src="fear-room/video/test-video.mp4" webkit-playsinline="">
 <source src="fear-room/video/test-video.mp4" type="video/mp4"/>
 </video>
-<audio crossorigin="anonymous" id="fearAudio" loop="" preload="metadata">
+<audio crossorigin="anonymous" id="fearAudio" loop="" preload="none">
 <source src="fear-room/video/test-video.mp4" type="audio/mp4"/>
 </audio>
-<audio crossorigin="anonymous" id="fearRoomMusic" loop preload="metadata">
+<audio crossorigin="anonymous" id="fearRoomMusic" loop preload="none">
   <source src="fear-room/music/fear_room_music/fear_room_music.mp3" type="audio/mpeg"/>
 </audio>
 
@@ -1880,12 +1881,26 @@ AFRAME.registerComponent('initial-yaw', {
 
             const MOVE_KEYS = new Set(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowLeft','ArrowDown','ArrowRight']);
 
-            this._onKeyDown = (e) => { if (MOVE_KEYS.has(e.code)) e.preventDefault(); this.keys[e.code] = true; };
-            this._onKeyUp = (e) => { if (MOVE_KEYS.has(e.code)) e.preventDefault(); this.keys[e.code] = false; };
+            this._onKeyDown = (e) => {
+              const t = e.target;
+              if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+              if (MOVE_KEYS.has(e.code)) e.preventDefault();
+              this.keys[e.code] = true;
+            };
+            this._onKeyUp = (e) => {
+              const t = e.target;
+              if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+              if (MOVE_KEYS.has(e.code)) e.preventDefault();
+              this.keys[e.code] = false;
+            };
             this._clearKeys = () => { for (const k in this.keys) this.keys[k] = false; };
 
-            window.addEventListener('keydown', this._onKeyDown, { passive: false });
-            window.addEventListener('keyup', this._onKeyUp, { passive: false });
+            // Capture at both document + window level for maximum reliability (some embeds / focus states drop one or the other).
+            this._keyOpts = { passive: false, capture: true };
+            window.addEventListener('keydown', this._onKeyDown, this._keyOpts);
+            window.addEventListener('keyup', this._onKeyUp, this._keyOpts);
+            document.addEventListener('keydown', this._onKeyDown, this._keyOpts);
+            document.addEventListener('keyup', this._onKeyUp, this._keyOpts);
 
             window.addEventListener('blur', this._clearKeys);
             document.addEventListener('visibilitychange', () => { if (document.hidden) this._clearKeys(); });
@@ -1894,6 +1909,17 @@ AFRAME.registerComponent('initial-yaw', {
             const scene = this.el.sceneEl;
             if (scene.hasLoaded) this._refreshColliders();
             else scene.addEventListener('loaded', () => this._refreshColliders());
+          },
+          remove: function () {
+            // Clean up listeners (prevents double-handling if scene hot-reloads).
+            try {
+              const opts = this._keyOpts || { passive: false, capture: true };
+              window.removeEventListener('keydown', this._onKeyDown, opts);
+              window.removeEventListener('keyup', this._onKeyUp, opts);
+              document.removeEventListener('keydown', this._onKeyDown, opts);
+              document.removeEventListener('keyup', this._onKeyUp, opts);
+            } catch (e) {}
+            try { window.removeEventListener('blur', this._clearKeys); } catch (e) {}
           },
           _refreshColliders: function () { this._colliders = Array.from(this.el.sceneEl.querySelectorAll('.collider')); },
           _getYaw: function () {
@@ -4139,6 +4165,24 @@ AFRAME.registerComponent('pbr-carpet', {
   });
 </script>
 <!-- ===== END INSERTED: Elevator User Guide Overlay Logic ===== -->
+
+
+<script>
+(function(){
+  const overlay = document.querySelector('.overlay');
+  if (!overlay) return;
+
+  function fadeOut(){
+    overlay.style.transition = 'opacity 600ms ease';
+    overlay.style.opacity = '0';
+    setTimeout(()=>{ overlay.style.display='none'; }, 650);
+  }
+
+  const scene = document.querySelector('a-scene');
+  if (scene && scene.hasLoaded) { fadeOut(); return; }
+  if (scene) scene.addEventListener('loaded', fadeOut, {once:true});
+})();
+</script>
 
 </body>
 </html>
