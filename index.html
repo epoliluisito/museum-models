@@ -491,27 +491,43 @@ AFRAME.registerComponent('light-beam', {
 
 <script>
 AFRAME.registerComponent('lazy-src', {
-  schema: { src: {type: 'string'}, dist: {type: 'number', default: 8} },
-  init: function () {
-    this.loaded = false;
-    this.tmpP = new THREE.Vector3();
-    this.tmpC = new THREE.Vector3();
+  schema: {
+    src: { type: 'string' },
+    dist: { type: 'number', default: 8 },
+    fadeMs: { type: 'number', default: 250 }
   },
-  tick: function () {
-    if (this.loaded) return;
+  init() {
+    this.loaded = false;
+    this.loading = false;
+    this.camEl = document.querySelector('#playerCam') || document.querySelector('[camera]');
+    // Start hidden so you never see white
+    this.el.setAttribute('material', 'transparent', true);
+    this.el.setAttribute('material', 'opacity', 0);
+  },
+  tick() {
+    if (this.loaded || this.loading || !this.camEl) return;
 
-    // Robust camera lookup (your camera entity is id="playerCam", not id="camera")
-    var scene = this.el.sceneEl;
-    var camEl = (scene && scene.camera && scene.camera.el) || (scene && scene.querySelector && scene.querySelector('[camera]'));
-    if (!camEl) return;
+    const p = this.el.object3D.getWorldPosition(new THREE.Vector3());
+    const c = this.camEl.object3D.getWorldPosition(new THREE.Vector3());
+    if (p.distanceTo(c) > this.data.dist) return;
 
-    this.el.object3D.getWorldPosition(this.tmpP);
-    camEl.object3D.getWorldPosition(this.tmpC);
+    this.loading = true;
 
-    if (this.tmpP.distanceTo(this.tmpC) <= this.data.dist) {
+    // Preload image first, then apply material
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
       this.el.setAttribute('material', 'src', this.data.src);
+      this.el.setAttribute('animation__lazyfade', `
+        property: material.opacity;
+        from: 0; to: 1;
+        dur: ${this.data.fadeMs};
+        easing: easeOutQuad
+      `);
       this.loaded = true;
-    }
+    };
+    img.onerror = () => { this.loading = false; };
+    img.src = this.data.src;
   }
 });
 </script>
