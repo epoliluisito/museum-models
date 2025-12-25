@@ -488,6 +488,28 @@ AFRAME.registerComponent('light-beam', {
 
   <!-- Prevent favicon.ico 404 -->
   <link rel="icon" href="data:,">
+
+<script>
+AFRAME.registerComponent('lazy-src', {
+  schema: { src: {type: 'string'}, dist: {type: 'number', default: 8} },
+  init: function () {
+    this.loaded = false;
+    this.cam = document.querySelector('#camera');
+    this.tmpP = new THREE.Vector3();
+    this.tmpC = new THREE.Vector3();
+  },
+  tick: function () {
+    if (this.loaded || !this.cam) return;
+    this.el.object3D.getWorldPosition(this.tmpP);
+    this.cam.object3D.getWorldPosition(this.tmpC);
+    if (this.tmpP.distanceTo(this.tmpC) <= this.data.dist) {
+      this.el.setAttribute('material', 'src', this.data.src);
+      this.loaded = true;
+    }
+  }
+});
+</script>
+
 </head>
 <body>
 
@@ -518,12 +540,6 @@ AFRAME.registerComponent('light-beam', {
 </audio>
 
 <!-- Station 3 panel textures -->
-<img id="station3_A1" crossorigin="anonymous" src="fear-room/assets/station3_A1.webp"/>
-<img id="station3_B1" crossorigin="anonymous" src="fear-room/assets/station3_B1.webp"/>
-<img id="station3_B2" crossorigin="anonymous" src="fear-room/assets/station3_B2.webp"/>
-<img id="station3_B3" crossorigin="anonymous" src="fear-room/assets/station3_B3.webp"/>
-<img id="station3_B4" crossorigin="anonymous" src="fear-room/assets/station3_B4.webp"/>
-<img id="station3_B5" crossorigin="anonymous" src="fear-room/assets/station3_B5.webp"/>
 <img id="station3_C1" crossorigin="anonymous" src="fear-room/assets/station3_C1.webp"/>
 <!-- Wall panel textures -->
 <img crossorigin="anonymous" id="Wall2Tex" src="fear-room/assets/Wall2.webp"/>
@@ -562,7 +578,6 @@ AFRAME.registerComponent('light-beam', {
 <img crossorigin="anonymous" id="carpet_rough" src="fear-room/textures/fabric_carpet/fabric_roughness.webp"/>
 <!-- Station 4: wall text / gallery label (right of monolith) -->
 <img crossorigin="anonymous" id="s4_station_text" src="fear-room/assets/station_04_text.webp"/>
-<img crossorigin="anonymous" id="fear_painting_tex" src="fear-room/assets/PAINTING.webp"/>
 <img crossorigin="anonymous" id="painting_label_tex" src="fear-room/assets/painting_label.webp"/>
 <img crossorigin="anonymous" id="station5_B_ownership_control_register_2048x2960" src="fear-room/assets/station_05_assets/station5_B_ownership-control-register_2048x2960.webp"/>
 <img crossorigin="anonymous" id="station5_C_lobbying_policy_timeline_2048x2960" src="fear-room/assets/station_05_assets/station5_C_lobbying-policy-timeline_2048x2960.webp"/>
@@ -620,7 +635,7 @@ AFRAME.registerComponent('light-beam', {
 <a-plane height="8" material="repeat: 6 10" mixin="matConcreteWallsCeiling" position="9 2.2 -4" rotation="90 0 0" width="3"></a-plane>
 
 <a-box class="collider" depth="30" height="4" material="color: #111; roughness: 0.7; metalness: 0.2; receiveShadow: true" position="-0.06 2 15" width="0.12"></a-box>
-<a-plane class="architectural-object" height="3.5" id="projection_screen_station_1" material="shader: standard; color: #0B0B0B; roughness: 0.9; metalness: 0.0; emissive: #000000; emissiveIntensity: 0.0; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -4" position="0.03 2.25 10.0" rotation="0 90 0" screen-always-on="video: #fearVideo; spillLight: #projectionSpill1; spillIntensity: 2.6; spillDistance: 6.5; spillAngle: 55; spillPenumbra: 0.9; spillPoint: #projectionFill1; pointIntensity: 0.45; pointDistance: 6.5" screen-surface="src: #fearVideo; maxLuma: 1.0; gain: 2.2; contrast: 1.1; brightness: 1.02; saturation: 1.05" width="12.0">
+<a-plane class="architectural-object" height="3.5" id="projection_screen_station_1" material="shader: standard; color: #0B0B0B; roughness: 0.9; metalness: 0.0; emissive: #000000; emissiveIntensity: 0.0; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -4" position="0.03 2.25 10.0" rotation="0 90 0" screen-always-on="video: #fearVideo; audio: #fearVideo; spillLight: #projectionSpill1; spillIntensity: 2.6; spillDistance: 6.5; spillAngle: 55; spillPenumbra: 0.9; spillPoint: #projectionFill1; pointIntensity: 0.45; pointDistance: 6.5" screen-surface="src: #fearVideo; maxLuma: 1.0; gain: 2.2; contrast: 1.1; brightness: 1.02; saturation: 1.05" width="12.0">
 <a-entity id="projectionSpill1" light="type: spot; color: #ffffff; intensity: 0.0; angle: 55; penumbra: 0.9; distance: 10; decay: 2; castShadow: false" position="0 0 0.08" rotation="0 180 0"></a-entity>
 <a-entity id="projectionFill1" light="type: point; color: #ffffff; intensity: 0.0; distance: 6.5; decay: 2; castShadow: false" position="0 0 0.14"></a-entity>
 </a-plane>
@@ -992,7 +1007,7 @@ AFRAME.registerComponent('light-beam', {
          width="5.30" height="3.53"
          position="17.99 1.95 20"
          rotation="0 -90 0"
-         material="shader: flat; src: #fear_painting_tex; transparent: true; side: double;">
+         material="shader: flat; transparent: true; side: double" lazy-src="src: url(fear-room/assets/PAINTING.webp); dist: 12">
 </a-plane>
 
 <a-plane id="painting_label"
@@ -1007,13 +1022,13 @@ AFRAME.registerComponent('light-beam', {
 <a-box class="collider" depth="10" height="3" material="color: #111; roughness: 0.7; metalness: 0.2; receiveShadow: true" position="17.94 1.5 11" width="0.12"></a-box>
 <!-- Station 3 panels (offset from colliders to avoid z-fighting) -->
 <!-- Short wall A (z ~ 6.06, facing +Z) -->
-<a-plane height="2.602" id="station3_A1_panel" position="15.75 1.5 6.13" rotation="0 0 0" width="3.701" material="shader: flat; src: #station3_A1; transparent: true; alphaTest: 0.01; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"></a-plane>
+<a-plane height="2.602" id="station3_A1_panel" position="15.75 1.5 6.13" rotation="0 0 0" width="3.701" material="shader: flat; transparent: true; alphaTest: 0.01; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/station3_A1.webp); dist: 10"></a-plane>
 <!-- Long wall B (x ~ 17.94, facing -X) -->
-<a-plane height="2.602" id="station3_B1_panel" position="17.87 1.5 7.11" rotation="0 -90 0" width="1.8" material="shader: flat; src: #station3_B1; transparent: true; alphaTest: 0.01; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"></a-plane>
-<a-plane height="2.602" id="station3_B2_panel" position="17.87 1.5 9.055" rotation="0 -90 0" width="1.8" material="shader: flat; src: #station3_B2; transparent: true; alphaTest: 0.01; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"></a-plane>
-<a-plane height="2.602" id="station3_B3_panel" position="17.87 1.5 11" rotation="0 -90 0" width="1.8" material="shader: flat; src: #station3_B3; transparent: true; alphaTest: 0.01; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"></a-plane>
-<a-plane height="2.602" id="station3_B4_panel" position="17.87 1.5 12.945" rotation="0 -90 0" width="1.8" material="shader: flat; src: #station3_B4; transparent: true; alphaTest: 0.01; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"></a-plane>
-<a-plane height="2.602" id="station3_B5_panel" position="17.87 1.5 14.89" rotation="0 -90 0" width="1.8" material="shader: flat; src: #station3_B5; transparent: true; alphaTest: 0.01; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"></a-plane>
+<a-plane height="2.602" id="station3_B1_panel" position="17.87 1.5 7.11" rotation="0 -90 0" width="1.8" material="shader: flat; transparent: true; alphaTest: 0.01; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/station3_B1.webp); dist: 10"></a-plane>
+<a-plane height="2.602" id="station3_B2_panel" position="17.87 1.5 9.055" rotation="0 -90 0" width="1.8" material="shader: flat; transparent: true; alphaTest: 0.01; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/station3_B2.webp); dist: 10"></a-plane>
+<a-plane height="2.602" id="station3_B3_panel" position="17.87 1.5 11" rotation="0 -90 0" width="1.8" material="shader: flat; transparent: true; alphaTest: 0.01; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/station3_B3.webp); dist: 10"></a-plane>
+<a-plane height="2.602" id="station3_B4_panel" position="17.87 1.5 12.945" rotation="0 -90 0" width="1.8" material="shader: flat; transparent: true; alphaTest: 0.01; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/station3_B4.webp); dist: 10"></a-plane>
+<a-plane height="2.602" id="station3_B5_panel" position="17.87 1.5 14.89" rotation="0 -90 0" width="1.8" material="shader: flat; transparent: true; alphaTest: 0.01; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/station3_B5.webp); dist: 10"></a-plane>
 <!-- Short wall C (z ~ 15.94, facing -Z) -->
 <a-plane height="2.602" id="station3_C1_panel" position="15.75 1.5 15.87" rotation="0 180 0" width="3.701" material="shader: flat; src: #station3_C1; transparent: true; alphaTest: 0.01; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"></a-plane>
 <a-box class="collider" depth="6" height="3.2" material="color: #111; roughness: 0.7; metalness: 0.2; receiveShadow: true" position="5.06 1.6 25" width="0.12"></a-box>
