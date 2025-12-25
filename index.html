@@ -485,6 +485,9 @@ AFRAME.registerComponent('light-beam', {
   }
 </style>
 
+
+  <!-- Prevent favicon.ico 404 -->
+  <link rel="icon" href="data:,">
 </head>
 <body>
 
@@ -507,12 +510,9 @@ AFRAME.registerComponent('light-beam', {
 <div class="overlay grain"></div>
 <a-scene tabindex="0" background="color: #020202" fog="type: exponential; color: #050505; density: 0.00022" renderer="antialias: true; colorManagement: true; physicallyCorrectLights: true; exposure: 0.92; highRefreshRate: true;" s4-mercury-manager="" shadow="type: pcfsoft; autoUpdate: true;" vr-mode-ui="enabled: false">
 <a-assets>
-<video autoplay="" crossorigin="anonymous" id="fearVideo" loop="" playsinline="" preload="auto" src="fear-room/video/test-video.mp4" webkit-playsinline="">
+<video autoplay crossorigin="anonymous" id="fearVideo" loop playsinline webkit-playsinline preload="auto">
 <source src="fear-room/video/test-video.mp4" type="video/mp4"/>
 </video>
-<audio crossorigin="anonymous" id="fearAudio" loop="" preload="auto">
-<source src="fear-room/video/test-video.mp4" type="audio/mp4"/>
-</audio>
 <audio crossorigin="anonymous" id="fearRoomMusic" loop preload="auto">
   <source src="fear-room/music/fear_room_music/fear_room_music.mp3" type="audio/mpeg"/>
 </audio>
