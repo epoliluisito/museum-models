@@ -1395,7 +1395,24 @@ AFRAME.registerComponent('light-beam', {
 
 
         
-        AFRAME.registerComponent('screen-surface', {
+        
+        // Ensure the reticle component attaches even if it was registered after the scene parsed.
+        (function () {
+          const boot = () => {
+            const r = document.getElementById('reticle');
+            if (!r) return;
+            const v = r.getAttribute('reticle-appear-near-clickable');
+            // Re-set the attribute to force A-Frame to (re)initialize the component now that it's registered.
+            r.setAttribute('reticle-appear-near-clickable', v || '');
+          };
+          if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', boot, { once: true });
+          } else {
+            boot();
+          }
+        })();
+
+AFRAME.registerComponent('screen-surface', {
           /**
            * Drives the projection surface as a self-lit PBR screen,
            * with an optional lightweight "grade" (contrast/brightness/saturation)
