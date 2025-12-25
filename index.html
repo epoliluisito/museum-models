@@ -485,31 +485,6 @@ AFRAME.registerComponent('light-beam', {
   }
 </style>
 
-
-  <!-- Prevent favicon.ico 404 -->
-  <link rel="icon" href="data:,">
-
-<script>
-AFRAME.registerComponent('lazy-src', {
-  schema: { src: {type: 'string'}, dist: {type: 'number', default: 8} },
-  init: function () {
-    this.loaded = false;
-    this.cam = document.querySelector('#camera');
-    this.tmpP = new THREE.Vector3();
-    this.tmpC = new THREE.Vector3();
-  },
-  tick: function () {
-    if (this.loaded || !this.cam) return;
-    this.el.object3D.getWorldPosition(this.tmpP);
-    this.cam.object3D.getWorldPosition(this.tmpC);
-    if (this.tmpP.distanceTo(this.tmpC) <= this.data.dist) {
-      this.el.setAttribute('material', 'src', this.data.src);
-      this.loaded = true;
-    }
-  }
-});
-</script>
-
 </head>
 <body>
 
@@ -521,7 +496,7 @@ AFRAME.registerComponent('lazy-src', {
     <li><strong>Move:</strong> WASD / Arrow Keys</li>
     <li><strong>Look:</strong> Mouse</li>
         <li><strong>Unlock mouse:</strong> Press <strong>ESC</strong> to release the cursor</li>
-<li><strong>Interact:</strong> Press <span class="keycap keycap-ask">ASK</span> to enable clicks, then click the call button</li>
+<li><strong>Interact:</strong> Click the call button (mouse unlocks automatically here)</li>
     <li><strong>Elevator:</strong> Press the button to open/close doors</li>
   </ul>
   <p class="muted">Step back to dismiss this guide.</p>
@@ -532,14 +507,23 @@ AFRAME.registerComponent('lazy-src', {
 <div class="overlay grain"></div>
 <a-scene tabindex="0" background="color: #020202" fog="type: exponential; color: #050505; density: 0.00022" renderer="antialias: true; colorManagement: true; physicallyCorrectLights: true; exposure: 0.92; highRefreshRate: true;" s4-mercury-manager="" shadow="type: pcfsoft; autoUpdate: true;" vr-mode-ui="enabled: false">
 <a-assets>
-<video autoplay crossorigin="anonymous" id="fearVideo" loop playsinline webkit-playsinline preload="auto">
+<video autoplay="" crossorigin="anonymous" id="fearVideo" loop="" playsinline="" preload="auto" src="fear-room/video/test-video.mp4" webkit-playsinline="">
 <source src="fear-room/video/test-video.mp4" type="video/mp4"/>
 </video>
+<audio crossorigin="anonymous" id="fearAudio" loop="" preload="auto">
+<source src="fear-room/video/test-video.mp4" type="audio/mp4"/>
+</audio>
 <audio crossorigin="anonymous" id="fearRoomMusic" loop preload="auto">
   <source src="fear-room/music/fear_room_music/fear_room_music.mp3" type="audio/mpeg"/>
 </audio>
 
 <!-- Station 3 panel textures -->
+<img id="station3_A1" crossorigin="anonymous" src="fear-room/assets/station3_A1.webp"/>
+<img id="station3_B1" crossorigin="anonymous" src="fear-room/assets/station3_B1.webp"/>
+<img id="station3_B2" crossorigin="anonymous" src="fear-room/assets/station3_B2.webp"/>
+<img id="station3_B3" crossorigin="anonymous" src="fear-room/assets/station3_B3.webp"/>
+<img id="station3_B4" crossorigin="anonymous" src="fear-room/assets/station3_B4.webp"/>
+<img id="station3_B5" crossorigin="anonymous" src="fear-room/assets/station3_B5.webp"/>
 <img id="station3_C1" crossorigin="anonymous" src="fear-room/assets/station3_C1.webp"/>
 <!-- Wall panel textures -->
 <img crossorigin="anonymous" id="Wall2Tex" src="fear-room/assets/Wall2.webp"/>
@@ -578,6 +562,7 @@ AFRAME.registerComponent('lazy-src', {
 <img crossorigin="anonymous" id="carpet_rough" src="fear-room/textures/fabric_carpet/fabric_roughness.webp"/>
 <!-- Station 4: wall text / gallery label (right of monolith) -->
 <img crossorigin="anonymous" id="s4_station_text" src="fear-room/assets/station_04_text.webp"/>
+<img crossorigin="anonymous" id="fear_painting_tex" src="fear-room/assets/PAINTING.webp"/>
 <img crossorigin="anonymous" id="painting_label_tex" src="fear-room/assets/painting_label.webp"/>
 <img crossorigin="anonymous" id="station5_B_ownership_control_register_2048x2960" src="fear-room/assets/station_05_assets/station5_B_ownership-control-register_2048x2960.webp"/>
 <img crossorigin="anonymous" id="station5_C_lobbying_policy_timeline_2048x2960" src="fear-room/assets/station_05_assets/station5_C_lobbying-policy-timeline_2048x2960.webp"/>
@@ -1007,7 +992,7 @@ AFRAME.registerComponent('lazy-src', {
          width="5.30" height="3.53"
          position="17.99 1.95 20"
          rotation="0 -90 0"
-         material="shader: flat; transparent: true; side: double" lazy-src="src: url(fear-room/assets/PAINTING.webp); dist: 12">
+         material="shader: flat; src: #fear_painting_tex; transparent: true; side: double;">
 </a-plane>
 
 <a-plane id="painting_label"
@@ -1022,13 +1007,13 @@ AFRAME.registerComponent('lazy-src', {
 <a-box class="collider" depth="10" height="3" material="color: #111; roughness: 0.7; metalness: 0.2; receiveShadow: true" position="17.94 1.5 11" width="0.12"></a-box>
 <!-- Station 3 panels (offset from colliders to avoid z-fighting) -->
 <!-- Short wall A (z ~ 6.06, facing +Z) -->
-<a-plane height="2.602" id="station3_A1_panel" position="15.75 1.5 6.13" rotation="0 0 0" width="3.701" material="shader: flat; transparent: true; alphaTest: 0.01; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/station3_A1.webp); dist: 10"></a-plane>
+<a-plane height="2.602" id="station3_A1_panel" position="15.75 1.5 6.13" rotation="0 0 0" width="3.701" material="shader: flat; src: #station3_A1; transparent: true; alphaTest: 0.01; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"></a-plane>
 <!-- Long wall B (x ~ 17.94, facing -X) -->
-<a-plane height="2.602" id="station3_B1_panel" position="17.87 1.5 7.11" rotation="0 -90 0" width="1.8" material="shader: flat; transparent: true; alphaTest: 0.01; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/station3_B1.webp); dist: 10"></a-plane>
-<a-plane height="2.602" id="station3_B2_panel" position="17.87 1.5 9.055" rotation="0 -90 0" width="1.8" material="shader: flat; transparent: true; alphaTest: 0.01; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/station3_B2.webp); dist: 10"></a-plane>
-<a-plane height="2.602" id="station3_B3_panel" position="17.87 1.5 11" rotation="0 -90 0" width="1.8" material="shader: flat; transparent: true; alphaTest: 0.01; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/station3_B3.webp); dist: 10"></a-plane>
-<a-plane height="2.602" id="station3_B4_panel" position="17.87 1.5 12.945" rotation="0 -90 0" width="1.8" material="shader: flat; transparent: true; alphaTest: 0.01; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/station3_B4.webp); dist: 10"></a-plane>
-<a-plane height="2.602" id="station3_B5_panel" position="17.87 1.5 14.89" rotation="0 -90 0" width="1.8" material="shader: flat; transparent: true; alphaTest: 0.01; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/station3_B5.webp); dist: 10"></a-plane>
+<a-plane height="2.602" id="station3_B1_panel" position="17.87 1.5 7.11" rotation="0 -90 0" width="1.8" material="shader: flat; src: #station3_B1; transparent: true; alphaTest: 0.01; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"></a-plane>
+<a-plane height="2.602" id="station3_B2_panel" position="17.87 1.5 9.055" rotation="0 -90 0" width="1.8" material="shader: flat; src: #station3_B2; transparent: true; alphaTest: 0.01; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"></a-plane>
+<a-plane height="2.602" id="station3_B3_panel" position="17.87 1.5 11" rotation="0 -90 0" width="1.8" material="shader: flat; src: #station3_B3; transparent: true; alphaTest: 0.01; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"></a-plane>
+<a-plane height="2.602" id="station3_B4_panel" position="17.87 1.5 12.945" rotation="0 -90 0" width="1.8" material="shader: flat; src: #station3_B4; transparent: true; alphaTest: 0.01; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"></a-plane>
+<a-plane height="2.602" id="station3_B5_panel" position="17.87 1.5 14.89" rotation="0 -90 0" width="1.8" material="shader: flat; src: #station3_B5; transparent: true; alphaTest: 0.01; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"></a-plane>
 <!-- Short wall C (z ~ 15.94, facing -Z) -->
 <a-plane height="2.602" id="station3_C1_panel" position="15.75 1.5 15.87" rotation="0 180 0" width="3.701" material="shader: flat; src: #station3_C1; transparent: true; alphaTest: 0.01; side: double; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"></a-plane>
 <a-box class="collider" depth="6" height="3.2" material="color: #111; roughness: 0.7; metalness: 0.2; receiveShadow: true" position="5.06 1.6 25" width="0.12"></a-box>
@@ -4137,7 +4122,34 @@ AFRAME.registerComponent('pbr-carpet', {
       this._shown = false;
       this._p = new THREE.Vector3();
       this._t = new THREE.Vector3();
+
+      // Camera + original look-controls settings (so we can restore them).
+      this._cam = document.getElementById('playerCam') || document.querySelector('[camera]');
+      this._origLC = null;
+      if (this._cam) {
+        try { this._origLC = this._cam.getAttribute('look-controls') || {}; }
+        catch (e) { this._origLC = {}; }
+      }
+
       if (this.ui) this.ui.classList.remove('show');
+    },
+
+    _setInteractionMode: function (on) {
+      const cam = this._cam;
+      if (!cam) return;
+
+      if (on) {
+        // Release pointer-lock (so the OS cursor is available) + disable look-controls
+        // so clicking doesn't immediately re-lock the pointer.
+        try { if (document.pointerLockElement) document.exitPointerLock(); } catch (e) {}
+        try { cam.setAttribute('look-controls', 'pointerLockEnabled: false; enabled: false'); } catch (e) {}
+      } else {
+        // Restore original look-controls settings.
+        const orig = this._origLC || {};
+        const ple = (orig.pointerLockEnabled !== undefined) ? orig.pointerLockEnabled : true;
+        const en  = (orig.enabled !== undefined) ? orig.enabled : true;
+        try { cam.setAttribute('look-controls', `pointerLockEnabled: ${ple}; enabled: ${en}`); } catch (e) {}
+      }
     },
 
     tick: function () {
@@ -4152,6 +4164,7 @@ AFRAME.registerComponent('pbr-carpet', {
       if (shouldShow !== this._shown) {
         this._shown = shouldShow;
         this.ui.classList.toggle('show', shouldShow);
+        this._setInteractionMode(shouldShow);
       }
     }
   });
