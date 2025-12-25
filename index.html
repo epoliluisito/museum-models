@@ -1353,7 +1353,15 @@ AFRAME.registerComponent('light-beam', {
 <a-entity id="rig" position="9 0 -7.5" rotation="0 180 0" rig-walk="speed: 2.6; radius: 0.28" elevator-user-guide="target: #industrial_elevator_1; showDistance: 6">
 <a-entity camera="fov: 60; near: 0.05; far: 1000; zoom: 1.08" id="playerCam" initial-yaw="yaw: 0" look-controls="pointerLockEnabled: true" pitch-clamp="min: -80; max: 80" position="0 1.6 0" rotation="0 0 0">
 <a-entity id="headLamp" light="type: spot; color: #fffef0; intensity: 0.8; angle: 50; penumbra: 0.5; distance: 10; decay: 1.5; castShadow: true" position="0 0 0"></a-entity>
-<a-entity id="reticle" cursor="rayOrigin: entity" raycaster="objects: .clickable; far: 6; interval: 80" reticle-appear-near-clickable="maxDistance: 6" visible="false" position="0 0 -1" geometry="primitive: ring; radiusInner: 0.007; radiusOuter: 0.010" material="shader: flat; color: #FFFFFF; opacity: 0.9"></a-entity>
+<a-entity id="reticle"
+          cursor="rayOrigin: entity"
+          raycaster="objects: .clickable; far: 6"
+          reticle-appear-near-clickable="maxDistance: 6"
+          visible="false">
+          <a-entity position="0 0 -1"
+            geometry="primitive: ring; radiusInner: 0.007; radiusOuter: 0.010"
+            material="shader: flat; color: #FFFFFF; opacity: 0.9"></a-entity>
+        </a-entity>
 </a-entity>
 </a-entity>
 <script>
@@ -1361,26 +1369,20 @@ AFRAME.registerComponent('light-beam', {
         const DEG2RAD = Math.PI / 180;
         const EPS = 0.001;
 
+
+        // Show the center reticle only when aiming at something clickable.
         AFRAME.registerComponent('reticle-appear-near-clickable', {
-          schema: {
-            maxDistance: { type: 'number', default: 6 }
-          },
+          schema: { maxDistance: { type: 'number', default: 6 } },
           init: function () {
             const el = this.el;
             el.setAttribute('visible', false);
 
             this._onHit = (e) => {
               const ints = (e && e.detail && e.detail.intersections) ? e.detail.intersections : [];
-              if (ints.length && (ints[0].distance <= this.data.maxDistance)) {
-                el.setAttribute('visible', true);
-              } else {
-                el.setAttribute('visible', false);
-              }
+              el.setAttribute('visible', !!(ints.length && ints[0].distance <= this.data.maxDistance));
             };
 
-            this._onClear = () => {
-              el.setAttribute('visible', false);
-            };
+            this._onClear = () => el.setAttribute('visible', false);
 
             el.addEventListener('raycaster-intersection', this._onHit);
             el.addEventListener('raycaster-intersection-cleared', this._onClear);
