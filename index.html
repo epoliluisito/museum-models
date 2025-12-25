@@ -7,6 +7,33 @@
 <title>fear</title>
 <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
 <script>
+/* Lazy-load a material src when the camera gets close.
+   Keeps pathways/colliders unchanged; only delays image downloads. */
+AFRAME.registerComponent('lazy-src', {
+  schema: { src: {type: 'string'}, dist: {type: 'number', default: 8} },
+  init: function () {
+    this.loaded = false;
+    this.camEl = document.querySelector('[camera]') || document.querySelector('#camera');
+    this._p = new THREE.Vector3();
+    this._c = new THREE.Vector3();
+  },
+  tick: function () {
+    if (this.loaded) return;
+    if (!this.camEl) {
+      this.camEl = document.querySelector('[camera]') || document.querySelector('#camera');
+      if (!this.camEl) return;
+    }
+    this.el.object3D.getWorldPosition(this._p);
+    this.camEl.object3D.getWorldPosition(this._c);
+    if (this._p.distanceTo(this._c) <= this.data.dist) {
+      this.el.setAttribute('material', 'src', this.data.src);
+      this.loaded = true;
+    }
+  }
+});
+</script>
+
+<script>
   // --- Cinematic haze + visible beams (no external deps) ----------------------
   (function () {
     // Shared smoke texture (CanvasTexture)
@@ -570,24 +597,20 @@ AFRAME.registerComponent('light-beam', {
 
 <img crossorigin="anonymous" id="station5_D_accountability_register_3072x2160" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/fear-room/assets/station_05_assets/station5_D_accountability-register_3072x2160.png"/>
 <!-- Photography corridor photos -->
-<img id="corridorPhoto01" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/fear-room/assets/photography%20corridor/Photo_01.webp"/>
-<img id="corridorPhoto02" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/fear-room/assets/photography%20corridor/Photo_02.webp"/>
-<img id="corridorPhoto04" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/fear-room/assets/photography%20corridor/Photo_04.webp"/>
-<img id="corridorPhoto05" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/fear-room/assets/photography%20corridor/Photo_05.webp"/>
-<img id="corridorPhoto06" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/fear-room/assets/photography%20corridor/Photo_06.webp"/>
-<img id="corridorPhoto07" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/fear-room/assets/photography%20corridor/Photo_07.webp"/>
-<img id="corridorPhoto08" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/fear-room/assets/photography%20corridor/Photo_08.webp"/>
-<img id="corridorPhoto09" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/fear-room/assets/photography%20corridor/Photo_09.webp"/>
-<img id="corridorPhoto10" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/fear-room/assets/photography%20corridor/Photo_10.webp"/>
-<img id="corridorPhoto11" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/fear-room/assets/photography%20corridor/Photo_11.webp"/>
-<img id="corridorPhoto12" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/fear-room/assets/photography%20corridor/Photo_12.webp"/>
-<img id="corridorPhoto13" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/fear-room/assets/photography%20corridor/Photo_13.webp"/>
-<img id="corridorPhoto14" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/fear-room/assets/photography%20corridor/Photo_14.webp"/>
-<img id="corridorPhoto15" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/fear-room/assets/photography%20corridor/Photo_15.webp"/>
-<img id="corridorPhoto16" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/fear-room/assets/photography%20corridor/Photo_16.webp"/>
-<img id="corridorPhoto17" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/fear-room/assets/photography%20corridor/Photo_17.webp"/>
 
-<img id="corridorPhoto18" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/fear-room/assets/photography%20corridor/Photo_18.webp"/>
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 <!-- Corridor photo labels -->
@@ -3586,8 +3609,8 @@ AFRAME.registerComponent('pbr-carpet', {
 
   <!-- Photo (3:2, 1.0m wide) -->
   <a-plane width="1.0" height="0.666667" position="0 0 0.01"
-           material="shader: flat; src: #corridorPhoto01; side: double;
-                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2">
+           material="shader: flat; side: double;
+                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/photography%20corridor/Photo_01.webp); dist: 8">
   </a-plane>
   <!-- Label -->
   <a-plane width="0.65" height="0.18" position="0 -0.52 0.02"
@@ -3607,8 +3630,8 @@ AFRAME.registerComponent('pbr-carpet', {
 
   <!-- Photo (3:2, 1.0m wide) -->
   <a-plane width="1.0" height="0.666667" position="0 0 0.01"
-           material="shader: flat; src: #corridorPhoto02; side: double;
-                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2">
+           material="shader: flat; side: double;
+                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/photography%20corridor/Photo_02.webp); dist: 8">
   </a-plane>
   <!-- Label -->
   <a-plane width="0.65" height="0.18" position="0 -0.52 0.02"
@@ -3628,8 +3651,8 @@ AFRAME.registerComponent('pbr-carpet', {
 
   <!-- Photo (3:2, 1.0m wide) -->
   <a-plane width="1.0" height="0.666667" position="0 0 0.01"
-           material="shader: flat; src: #corridorPhoto04; side: double;
-                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2">
+           material="shader: flat; side: double;
+                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/photography%20corridor/Photo_04.webp); dist: 8">
   </a-plane>
   <!-- Label -->
   <a-plane width="0.65" height="0.18" position="0 -0.52 0.02"
@@ -3649,8 +3672,8 @@ AFRAME.registerComponent('pbr-carpet', {
 
   <!-- Photo (3:2, 1.0m wide) -->
   <a-plane width="1.0" height="0.666667" position="0 0 0.01"
-           material="shader: flat; src: #corridorPhoto05; side: double;
-                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2">
+           material="shader: flat; side: double;
+                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/photography%20corridor/Photo_05.webp); dist: 8">
   </a-plane>
   <!-- Label -->
   <a-plane width="0.65" height="0.18" position="0 -0.52 0.02"
@@ -3670,8 +3693,8 @@ AFRAME.registerComponent('pbr-carpet', {
 
   <!-- Photo (3:2, 1.0m wide) -->
   <a-plane width="1.0" height="0.666667" position="0 0 0.01"
-           material="shader: flat; src: #corridorPhoto06; side: double;
-                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2">
+           material="shader: flat; side: double;
+                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/photography%20corridor/Photo_06.webp); dist: 8">
   </a-plane>
   <!-- Label -->
   <a-plane width="0.65" height="0.18" position="0 -0.52 0.02"
@@ -3691,8 +3714,8 @@ AFRAME.registerComponent('pbr-carpet', {
 
   <!-- Photo (3:2, 1.0m wide) -->
   <a-plane width="1.0" height="0.666667" position="0 0 0.01"
-           material="shader: flat; src: #corridorPhoto07; side: double;
-                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2">
+           material="shader: flat; side: double;
+                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/photography%20corridor/Photo_07.webp); dist: 8">
   </a-plane>
   <!-- Label -->
   <a-plane width="0.65" height="0.18" position="0 -0.52 0.02"
@@ -3712,8 +3735,8 @@ AFRAME.registerComponent('pbr-carpet', {
 
   <!-- Photo (3:2, 1.0m wide) -->
   <a-plane width="1.0" height="0.666667" position="0 0 0.01"
-           material="shader: flat; src: #corridorPhoto08; side: double;
-                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2">
+           material="shader: flat; side: double;
+                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/photography%20corridor/Photo_08.webp); dist: 8">
   </a-plane>
   <!-- Label -->
   <a-plane width="0.65" height="0.18" position="0 -0.52 0.02"
@@ -3733,8 +3756,8 @@ AFRAME.registerComponent('pbr-carpet', {
 
   <!-- Photo (3:2, 1.0m wide) -->
   <a-plane width="1.0" height="0.666667" position="0 0 0.01"
-           material="shader: flat; src: #corridorPhoto09; side: double;
-                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2">
+           material="shader: flat; side: double;
+                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/photography%20corridor/Photo_09.webp); dist: 8">
   </a-plane>
   <!-- Label -->
   <a-plane width="0.65" height="0.18" position="0 -0.52 0.02"
@@ -3754,8 +3777,8 @@ AFRAME.registerComponent('pbr-carpet', {
 
   <!-- Photo (3:2, 1.0m wide) -->
   <a-plane width="1.0" height="0.666667" position="0 0 0.01"
-           material="shader: flat; src: #corridorPhoto10; side: double;
-                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2">
+           material="shader: flat; side: double;
+                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/photography%20corridor/Photo_10.webp); dist: 8">
   </a-plane>
   <!-- Label -->
   <a-plane width="0.65" height="0.18" position="0 -0.52 0.02"
@@ -3776,8 +3799,8 @@ AFRAME.registerComponent('pbr-carpet', {
 
   <!-- Photo (3:2, 1.0m wide) -->
   <a-plane width="1.0" height="0.666667" position="0 0 0.01"
-           material="shader: flat; src: #corridorPhoto11; side: double;
-                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2">
+           material="shader: flat; side: double;
+                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/photography%20corridor/Photo_11.webp); dist: 8">
   </a-plane>
   <!-- Label -->
   <a-plane width="0.65" height="0.18" position="0 -0.52 0.02"
@@ -3797,8 +3820,8 @@ AFRAME.registerComponent('pbr-carpet', {
 
   <!-- Photo (3:2, 1.0m wide) -->
   <a-plane width="1.0" height="0.666667" position="0 0 0.01"
-           material="shader: flat; src: #corridorPhoto12; side: double;
-                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2">
+           material="shader: flat; side: double;
+                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/photography%20corridor/Photo_12.webp); dist: 8">
   </a-plane>
   <!-- Label -->
   <a-plane width="0.65" height="0.18" position="0 -0.52 0.02"
@@ -3818,8 +3841,8 @@ AFRAME.registerComponent('pbr-carpet', {
 
   <!-- Photo (3:2, 1.0m wide) -->
   <a-plane width="1.0" height="0.666667" position="0 0 0.01"
-           material="shader: flat; src: #corridorPhoto13; side: double;
-                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2">
+           material="shader: flat; side: double;
+                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/photography%20corridor/Photo_13.webp); dist: 8">
   </a-plane>
   <!-- Label -->
   <a-plane width="0.65" height="0.18" position="0 -0.52 0.02"
@@ -3840,8 +3863,8 @@ AFRAME.registerComponent('pbr-carpet', {
 
   <!-- Photo (3:2, 1.0m wide) -->
   <a-plane width="1.0" height="0.666667" position="0 0 0.01"
-           material="shader: flat; src: #corridorPhoto14; side: double;
-                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2">
+           material="shader: flat; side: double;
+                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/photography%20corridor/Photo_14.webp); dist: 8">
   </a-plane>
   <!-- Label -->
   <a-plane width="0.65" height="0.18" position="0 -0.52 0.02"
@@ -3862,8 +3885,8 @@ AFRAME.registerComponent('pbr-carpet', {
 
   <!-- Photo (3:2, 1.0m wide) -->
   <a-plane width="1.0" height="0.666667" position="0 0 0.01"
-           material="shader: flat; src: #corridorPhoto15; side: double;
-                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2">
+           material="shader: flat; side: double;
+                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/photography%20corridor/Photo_15.webp); dist: 8">
   </a-plane>
   <!-- Label -->
   <a-plane width="0.65" height="0.18" position="0 -0.52 0.02"
@@ -3884,8 +3907,8 @@ AFRAME.registerComponent('pbr-carpet', {
 
   <!-- Photo (3:2, 1.0m wide) -->
   <a-plane width="1.0" height="0.666667" position="0 0 0.01"
-           material="shader: flat; src: #corridorPhoto16; side: double;
-                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2">
+           material="shader: flat; side: double;
+                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/photography%20corridor/Photo_16.webp); dist: 8">
   </a-plane>
   <!-- Label -->
   <a-plane width="0.65" height="0.18" position="0 -0.52 0.02"
@@ -3906,8 +3929,8 @@ AFRAME.registerComponent('pbr-carpet', {
 
   <!-- Photo (3:2, 1.0m wide) -->
   <a-plane width="1.0" height="0.666667" position="0 0 0.01"
-           material="shader: flat; src: #corridorPhoto17; side: double;
-                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2">
+           material="shader: flat; side: double;
+                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/photography%20corridor/Photo_17.webp); dist: 8">
   </a-plane>
   <!-- Label -->
   <a-plane width="0.65" height="0.18" position="0 -0.52 0.02"
@@ -3927,8 +3950,8 @@ AFRAME.registerComponent('pbr-carpet', {
 
   <!-- Photo (3:2, 1.0m wide) -->
   <a-plane width="1.0" height="0.666667" position="0 0 0.01"
-           material="shader: flat; src: #corridorPhoto18; side: double;
-                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2">
+           material="shader: flat; side: double;
+                     polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2" lazy-src="src: url(fear-room/assets/photography%20corridor/Photo_18.webp); dist: 8">
   </a-plane>
   <!-- Label -->
   <a-plane width="0.65" height="0.18" position="0 -0.52 0.02"
