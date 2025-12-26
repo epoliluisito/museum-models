@@ -488,287 +488,268 @@ AFRAME.registerComponent('light-beam', {
 
   <!-- Prevent favicon.ico 404 -->
   <link rel="icon" href="data:,">
-<style>
-  /* ===== INTRO / LOADING OVERLAY ===== */
-  #introOverlay{
-    position:fixed; inset:0; z-index:10000;
-    background:#000;
-    display:flex; align-items:center; justify-content:center;
-    overflow:hidden;
+
+<style id="eraoraIntroStyles">
+  /* ===== ERA ORA Intro + Loading ===== */
+  #bootScreen, #introScreen, #quitConfirm {
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
   }
-  #introOverlay .introVideo{
-    position:absolute; inset:0;
-    width:100%; height:100%;
-    object-fit:cover;
-    filter: contrast(1.05) brightness(0.92);
-    opacity:1;
+
+  #bootScreen{
+    position: fixed; inset: 0;
+    background: #000;
+    color: rgba(255,255,255,0.92);
+    z-index: 120;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 700ms ease;
+  }
+  #bootScreen.hide{ opacity: 0; pointer-events: none; }
+
+  #bootInner{
+    width: min(560px, calc(100vw - 48px));
+    letter-spacing: 0.2px;
+  }
+  #bootTitle{
+    font-size: 14px;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    opacity: 0.9;
+    margin-bottom: 10px;
+  }
+  #bootSub{
+    font-size: 12px;
+    opacity: 0.8;
+    margin-bottom: 14px;
+  }
+  #bootBarWrap{
+    width: 100%;
+    height: 10px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.12);
+    overflow: hidden;
+  }
+  #bootBar{
+    height: 100%;
+    width: 0%;
+    background: rgba(255,255,255,0.82);
+    transition: width 250ms ease;
+  }
+  #bootPct{
+    margin-top: 10px;
+    font-size: 12px;
+    opacity: 0.75;
+  }
+
+  #introScreen{
+    position: fixed; inset: 0;
+    background: #000;
+    z-index: 110;
+    opacity: 0;
+    pointer-events: none;
     transition: opacity 900ms ease;
   }
-  #introOverlay .introVideo.walking{
-    opacity:0;
-  }
-  #introOverlay.begin .introVideo.waiting{ opacity:0; }
-  #introOverlay.begin .introVideo.walking{ opacity:1; }
+  #introScreen.show{ opacity: 1; pointer-events: auto; }
 
-  #introOverlay.begin .panel{
-    opacity:0;
-    transform: translateY(6px);
-    pointer-events:none;
-  }
-
-  #introOverlay .introVignette{
+  #introVideoStage{
     position:absolute; inset:0;
-    background:
-      radial-gradient(120% 100% at 50% 50%, rgba(0,0,0,0.30), rgba(0,0,0,0.92));
-    pointer-events:none;
+    overflow:hidden;
+    background:#000;
+  }
+  #introVideoStage video{
+    position:absolute; inset:0;
+    width:100%;
+    height:100%;
+    object-fit:cover;
+    opacity:0;
+    transition: opacity 1200ms ease;
+  }
+  /* default visible is waiting in waiting-mode */
+  #introScreen.mode-waiting #introWaiting{ opacity: 1; }
+  #introScreen.mode-waiting #introWalking{ opacity: 0; }
+
+  #introScreen.mode-walking #introWaiting{ opacity: 0; }
+  #introScreen.mode-walking #introWalking{ opacity: 1; }
+
+  #introScreen.fade-to-room{
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 1400ms ease;
   }
 
-  #introOverlay .panel{
-    position:relative;
-    width:min(860px, calc(100vw - 48px));
-    max-height: calc(100vh - 56px);
-    overflow:auto;
-    background: rgba(0,0,0,0.62);
-    border: 1px solid rgba(255,255,255,0.10);
+  #introPanel{
+    position:absolute;
+    left:50%;
+    top:50%;
+    transform: translate(-50%,-50%);
+    width: min(780px, calc(100vw - 48px));
+    max-height: min(78vh, 820px);
+    overflow: auto;
+    background: rgba(0,0,0,0.72);
+    border: 1px solid rgba(255,255,255,0.14);
     border-radius: 14px;
-    padding: 18px 18px 16px 18px;
-    color: rgba(255,255,255,0.92);
-    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-    line-height: 1.45;
-    box-shadow: 0 18px 60px rgba(0,0,0,0.55);
+    padding: 22px 22px 18px 22px;
+    box-shadow: 0 22px 70px rgba(0,0,0,0.62);
     backdrop-filter: blur(6px);
-    transition: opacity 700ms ease, transform 700ms ease;
+    color: rgba(255,255,255,0.92);
   }
-  #introOverlay .panel::-webkit-scrollbar{ width: 10px; }
-  #introOverlay .panel::-webkit-scrollbar-thumb{ background: rgba(255,255,255,0.10); border-radius: 10px; }
-  #introOverlay .kicker{
+  #introPanel.fade{
+    opacity:0;
+    transform: translate(-50%,-50%) scale(0.99);
+    transition: opacity 800ms ease, transform 800ms ease;
+    pointer-events:none;
+  }
+  .introKicker{
     font-size: 12px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    opacity: 0.85;
+    margin-bottom: 8px;
+  }
+  .introBody{
+    font-size: 14px;
+    line-height: 1.45;
+    opacity: 0.96;
+    margin: 0 0 12px 0;
+  }
+  .introDivider{
+    margin: 14px 0;
+    opacity: 0.65;
+  }
+  .introControlsTitle{
+    margin-top: 10px;
+    font-size: 13px;
     letter-spacing: 0.14em;
     text-transform: uppercase;
     opacity: 0.85;
-    margin-bottom: 10px;
   }
-  #introOverlay h1{
-    font-size: 18px;
-    letter-spacing: 0.04em;
-    margin: 0 0 10px 0;
-    font-weight: 700;
+  #introPanel ul{
+    margin: 10px 0 0 18px;
+    padding: 0;
   }
-  #introOverlay p{ margin: 0 0 10px 0; font-size: 14px; }
-  #introOverlay .rule{
-    margin: 10px 0 12px 0;
-    opacity: 0.65;
-    letter-spacing: 0.18em;
-    user-select:none;
+  #introPanel li{
+    margin: 6px 0;
   }
-  #introOverlay ul{
-    margin: 8px 0 12px 0;
-    padding-left: 18px;
-    font-size: 14px;
-  }
-  #introOverlay li{ margin: 6px 0; }
-
-  #introOverlay .audioHint{
-    margin-top: 6px;
-    font-size: 13px;
-    opacity: 0.88;
-  }
-
-  #introOverlay .controlsRow{
-    display:flex; align-items:center; gap: 10px;
-    margin-top: 14px;
-    flex-wrap: wrap;
-  }
-  #introOverlay button{
-    appearance:none; border:0;
-    padding: 10px 14px;
-    border-radius: 12px;
+  .keycap{
+    display:inline-block;
+    padding: 2px 8px;
+    border-radius: 7px;
+    background: rgba(245,245,245,0.92);
+    color: #111;
     font-weight: 800;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    cursor:pointer;
-    user-select:none;
-  }
-  #introBegin{
-    background: rgba(255,255,255,0.92);
-    color:#111;
-    box-shadow: 0 10px 26px rgba(0,0,0,0.35);
-  }
-  #introBegin:active{ transform: translateY(1px); }
-  #introBegin[disabled]{
-    opacity: 0.55;
-    cursor: not-allowed;
-  }
-
-  #introOverlay .progressWrap{
-    flex: 1 1 260px;
-    min-width: 220px;
-  }
-  #introOverlay .progressTop{
-    display:flex; justify-content:space-between; gap: 10px;
     font-size: 12px;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    opacity: 0.82;
-    margin-bottom: 6px;
+    letter-spacing: 0.10em;
+    box-shadow: 0 2px 0 rgba(0,0,0,0.45);
+    border: 1px solid rgba(255,255,255,0.18);
+    vertical-align: 1px;
   }
-  #introOverlay .progressBar{
-    height: 10px;
-    border-radius: 999px;
-    background: rgba(255,255,255,0.10);
-    overflow:hidden;
+  #introFooter{
+    display:flex;
+    align-items:center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 16px;
   }
-  #introOverlay .progressFill{
-    height: 100%;
-    width: 2%;
-    background: rgba(255,255,255,0.85);
-    border-radius: 999px;
-    transition: width 220ms ease;
-  }
-  #introOverlay .statusLine{
-    margin-top: 8px;
-    font-size: 13px;
-    opacity: 0.82;
-  }
-
-  /* Quit button bottom-left */
-  #introQuit{
-    position: fixed;
-    left: 14px; bottom: 14px;
-    z-index: 10001;
-    padding: 10px 12px;
-    background: rgba(0,0,0,0.55);
-    color: rgba(255,255,255,0.92);
-    border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 12px;
-    box-shadow: 0 12px 28px rgba(0,0,0,0.45);
+  #audioStatus{
     font-size: 12px;
-    letter-spacing: 0.16em;
+    opacity: 0.78;
+    line-height: 1.25;
   }
-  #introQuit:hover{ background: rgba(0,0,0,0.68); }
-
-  /* Quit confirm modal */
-  #introQuitConfirm{
-    position: fixed; inset: 0;
-    display:none;
-    align-items:center; justify-content:center;
-    z-index: 10002;
-    background: rgba(0,0,0,0.72);
-  }
-  #introQuitConfirm.show{ display:flex; }
-  #introQuitConfirm .modal{
-    width: min(420px, calc(100vw - 48px));
-    background: rgba(0,0,0,0.80);
-    border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 14px;
-    padding: 16px;
-    color: rgba(255,255,255,0.92);
-    box-shadow: 0 18px 60px rgba(0,0,0,0.55);
-    backdrop-filter: blur(6px);
-    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-  }
-  #introQuitConfirm .modal h2{
-    margin:0 0 8px 0;
-    font-size: 14px;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    opacity: 0.92;
-  }
-  #introQuitConfirm .modal p{
-    margin:0 0 14px 0;
-    font-size: 14px;
-    opacity: 0.90;
-  }
-  #introQuitConfirm .modal .row{
-    display:flex; gap: 10px; justify-content:flex-end;
-  }
-  #introQuitNo{
+  #beginBtn{
+    appearance: none;
+    border: 1px solid rgba(255,255,255,0.22);
     background: rgba(255,255,255,0.12);
     color: rgba(255,255,255,0.95);
-    border: 1px solid rgba(255,255,255,0.16);
+    font-weight: 800;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    padding: 10px 16px;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: transform 120ms ease, background 160ms ease, border-color 160ms ease;
   }
-  #introQuitYes{
-    background: rgba(255,255,255,0.92);
-    color:#111;
-  }
+  #beginBtn:hover{ background: rgba(255,255,255,0.18); border-color: rgba(255,255,255,0.35); }
+  #beginBtn:active{ transform: translateY(1px); }
 
-  /* Fade out overlay when entering the room */
-  #introOverlay.fadeOut{
-    opacity: 0;
-    transition: opacity 900ms ease;
-    pointer-events:none;
+  /* Quit UI */
+  #quitShell{
+    position: fixed;
+    left: 14px;
+    bottom: 14px;
+    z-index: 220;
+  }
+  #quitBtn{
+    appearance:none;
+    border: 1px solid rgba(255,255,255,0.16);
+    background: rgba(0,0,0,0.35);
+    color: rgba(255,255,255,0.85);
+    padding: 8px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    cursor: pointer;
+    backdrop-filter: blur(6px);
+  }
+  #quitBtn:hover{ border-color: rgba(255,255,255,0.32); color: rgba(255,255,255,0.95); }
+
+  #quitConfirm{
+    position: fixed; inset: 0;
+    display:none;
+    align-items:center;
+    justify-content:center;
+    background: rgba(0,0,0,0.62);
+    z-index: 230;
+  }
+  #quitConfirm.show{ display:flex; }
+  #quitCard{
+    width: min(420px, calc(100vw - 48px));
+    background: rgba(0,0,0,0.78);
+    border: 1px solid rgba(255,255,255,0.16);
+    border-radius: 14px;
+    padding: 18px;
+    color: rgba(255,255,255,0.92);
+    box-shadow: 0 22px 70px rgba(0,0,0,0.62);
+  }
+  #quitCard h3{
+    margin: 0 0 8px 0;
+    font-size: 14px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+  }
+  #quitCard p{
+    margin: 0 0 14px 0;
+    font-size: 13px;
+    opacity: 0.85;
+    line-height: 1.35;
+  }
+  #quitActions{
+    display:flex;
+    gap: 10px;
+    justify-content:flex-end;
+  }
+  .qbtn{
+    appearance:none;
+    border: 1px solid rgba(255,255,255,0.18);
+    background: rgba(255,255,255,0.10);
+    color: rgba(255,255,255,0.92);
+    padding: 9px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .qbtn.primary{
+    background: rgba(255,255,255,0.18);
+    border-color: rgba(255,255,255,0.32);
+    color: rgba(255,255,255,0.96);
   }
 </style>
 
 </head>
 <body>
-
-<!-- ===== INTRO / LOADING OVERLAY ===== -->
-<div id="introOverlay" aria-hidden="false">
-  <video id="introWaiting" class="introVideo waiting" autoplay muted loop playsinline preload="auto" crossorigin="anonymous">
-    <source src="fear-room/video/Waiting.mp4" type="video/mp4">
-    <source src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/fear-room/video/Waiting.mp4" type="video/mp4">
-  </video>
-
-  <video id="introWalking" class="introVideo walking" muted playsinline preload="auto" crossorigin="anonymous">
-    <source src="fear-room/video/Walking%20in.mp4" type="video/mp4">
-    <source src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/fear-room/video/Walking%20in.mp4" type="video/mp4">
-  </video>
-
-  <div class="introVignette"></div>
-
-  <div class="panel" role="dialog" aria-label="Intro">
-    <div class="kicker">WHAT THIS IS ABOUT</div>
-
-    <p><strong>ERA ORA — BEYOND THE BOOK</strong> is an exhibition about disruption in the world of work—how roles, identities, and everyday systems shift under technological change, and what gets reclassified as “normal” after the shock.</p>
-
-    <p>The experience is framed as a retrospective from the future: as if you are visiting the exhibition ten years from now, looking back on the present as the moment when the rules began to change. It’s a deliberate pretense—an archival stance—meant to make today feel observable, even strange, through the distance of time.</p>
-
-    <p class="audioHint" id="introAudioHint">Press <strong>ENTER</strong> to activate audio (recommended).</p>
-
-    <div class="rule">⸻</div>
-
-    <div class="kicker">THE 3D EXPERIENCE + HOW TO NAVIGATE</div>
-
-    <p>You are entering a speculative 3D interpretation of the exhibition: a navigable space where video and spatial encounters work together. There is no single route—meaning is built through movement, proximity, and attention.</p>
-
-    <ul>
-      <li><strong>Move:</strong> W A S D or Arrow keys</li>
-      <li><strong>Look around:</strong> Mouse</li>
-      <li><strong>Explore:</strong> approach screens/objects to encounter scenes and fragments</li>
-    </ul>
-
-    <p>When you’re ready, press <strong>BEGIN</strong> to start.</p>
-
-    <div class="controlsRow">
-      <button id="introBegin" type="button">BEGIN</button>
-
-      <div class="progressWrap" aria-label="Loading progress">
-        <div class="progressTop">
-          <div id="introStatus">Loading…</div>
-          <div id="introProgressPct">0%</div>
-        </div>
-        <div class="progressBar" aria-hidden="true"><div id="introProgressFill" class="progressFill"></div></div>
-        <div class="statusLine">If it stutters later: press <strong>ESC</strong> to release the cursor.</div>
-      </div>
-    </div>
-  </div>
-
-  <button id="introQuit" type="button" aria-label="Quit">QUIT</button>
-
-  <div id="introQuitConfirm" aria-hidden="true">
-    <div class="modal" role="dialog" aria-label="Quit confirmation">
-      <h2>Quit experience?</h2>
-      <p>If you quit now, you’ll be redirected to the project page.</p>
-      <div class="row">
-        <button id="introQuitNo" type="button">Cancel</button>
-        <button id="introQuitYes" type="button">Quit</button>
-      </div>
-    </div>
-  </div>
-</div>
-<!-- ===== END INTRO / LOADING OVERLAY ===== -->
-
 
 <!-- ===== UI OVERLAY: Elevator User Guide (outside A-Frame canvas) ===== -->
 <div id="elevatorGuide" aria-hidden="true">
@@ -786,8 +767,79 @@ AFRAME.registerComponent('light-beam', {
 <!-- ===== END UI OVERLAY ===== -->
 
 <div id="hint" style="display:none"></div>
+
+<!-- ===== ERA ORA Intro / Loading UI ===== -->
+<div id="bootScreen" role="status" aria-live="polite">
+  <div id="bootInner">
+    <div id="bootTitle">ERA ORA &gt; beyond the book</div>
+    <div id="bootSub">experience loading</div>
+    <div id="bootBarWrap"><div id="bootBar"></div></div>
+    <div id="bootPct">0%</div>
+  </div>
+</div>
+
+<div id="introScreen" class="mode-waiting" aria-hidden="true">
+  <div id="introVideoStage">
+    <video id="introWaiting" playsinline webkit-playsinline loop preload="auto" muted crossorigin="anonymous">
+      <source src="fear-room/video/Waiting.mp4" type="video/mp4">
+    </video>
+    <video id="introWalking" playsinline webkit-playsinline preload="auto" muted crossorigin="anonymous">
+      <source src="fear-room/video/Walking%20in.mp4" type="video/mp4">
+    </video>
+  </div>
+
+  <div id="introPanel">
+    <div class="introKicker">WHAT THIS IS ABOUT</div>
+
+    <p class="introBody">
+      <strong>ERA ORA — BEYOND THE BOOK</strong> is an exhibition about disruption in the world of work—how roles, identities, and everyday systems shift under technological change, and what gets reclassified as “normal” after the shock.
+    </p>
+    <p class="introBody">
+      The experience is framed as a retrospective from the future: as if you are visiting the exhibition ten years from now, looking back on the present as the moment when the rules began to change. It’s a deliberate pretense—an archival stance—meant to make today feel observable, even strange, through the distance of time.
+    </p>
+    <p class="introBody">
+      Press <span class="keycap">ENTER</span> to activate audio (recommended).
+    </p>
+
+    <div class="introDivider">⸻</div>
+
+    <div class="introKicker">THE 3D EXPERIENCE + HOW TO NAVIGATE</div>
+    <p class="introBody">
+      You are entering a speculative 3D interpretation of the exhibition: a navigable space where video and spatial encounters work together. There is no single route—meaning is built through movement, proximity, and attention.
+    </p>
+
+    <div class="introControlsTitle">Controls</div>
+    <ul class="introBody">
+      <li><strong>Move:</strong> W A S D or Arrow keys</li>
+      <li><strong>Look around:</strong> Mouse</li>
+      <li><strong>Explore:</strong> approach screens/objects to encounter scenes and fragments</li>
+    </ul>
+
+    <div id="introFooter">
+      <div id="audioStatus">Audio: <strong>OFF</strong> — press <span class="keycap">ENTER</span> to enable</div>
+      <button id="beginBtn" type="button">BEGIN</button>
+    </div>
+  </div>
+</div>
+
+<div id="quitShell">
+  <button id="quitBtn" type="button">QUIT</button>
+</div>
+
+<div id="quitConfirm" aria-hidden="true">
+  <div id="quitCard" role="dialog" aria-modal="true" aria-label="Quit experience">
+    <h3>Quit experience</h3>
+    <p>You’re about to leave the 3D experience.</p>
+    <div id="quitActions">
+      <button class="qbtn" id="quitCancel" type="button">Cancel</button>
+      <button class="qbtn primary" id="quitConfirmBtn" type="button">Quit</button>
+    </div>
+  </div>
+</div>
+<!-- ===== END ERA ORA Intro / Loading UI ===== -->
+
 <div class="overlay grain"></div>
-<a-scene id="scene" loading-screen="enabled: false" style="visibility:hidden; opacity:0; transition: opacity 900ms ease;" tabindex="0" background="color: #020202" fog="type: exponential; color: #050505; density: 0.00022" renderer="antialias: true; colorManagement: true; physicallyCorrectLights: true; exposure: 0.92; highRefreshRate: true;" s4-mercury-manager="" shadow="type: pcfsoft; autoUpdate: true;" vr-mode-ui="enabled: false">
+<a-scene tabindex="0" background="color: #020202" fog="type: exponential; color: #050505; density: 0.00022" renderer="antialias: true; colorManagement: true; physicallyCorrectLights: true; exposure: 0.92; highRefreshRate: true;" s4-mercury-manager="" shadow="type: pcfsoft; autoUpdate: true;" vr-mode-ui="enabled: false">
 <a-assets>
 <video autoplay crossorigin="anonymous" id="fearVideo" loop playsinline webkit-playsinline preload="auto">
 <source src="fear-room/video/test-video.mp4" type="video/mp4"/>
@@ -1960,12 +2012,6 @@ AFRAME.registerComponent('positional-media-audio', {
     // Reliable user-gesture unlock.
     window.addEventListener('pointerdown', unlock, { once: true });
     window.addEventListener('keydown', unlock, { once: true });
-
-    // If audio was already unlocked by the intro overlay (before this component initialized),
-    // immediately attempt to unlock now so you can hear in-room video audio without another click.
-    try {
-      if (window.__fearAudioUnlocked) unlock();
-    } catch (e) {}
   },
 
   update: function () {
@@ -2064,10 +2110,10 @@ AFRAME.registerComponent('screen-always-on', {
             // Positional audio (separate element, synced to video time).
             this.el.setAttribute('positional-media-audio', {
               el: (this.data.audio || this.data.video),
-              volume: 0.95,
-              refDistance: 0.9,
+              volume: 0.68,
+              refDistance: 1.4,
               maxDistance: 22.0,
-              rolloffFactor: 2.2
+              rolloffFactor: 1.4
             });
 
             this._setSpill(true);
@@ -4247,7 +4293,7 @@ AFRAME.registerComponent('pbr-carpet', {
   window.addEventListener('DOMContentLoaded', () => {
     const v = document.querySelector('#fearVideo');
     const a = null; // legacy (no longer used)
-    const m = null; // room audio is started by the intro controller when the room is revealed
+    const m = document.querySelector('#fearRoomMusic');
 
     async function tryStart(){
       let blocked = false;
@@ -4427,291 +4473,298 @@ AFRAME.registerComponent('pbr-carpet', {
   });
 </script>
 <!-- ===== END INSERTED: Elevator User Guide Overlay Logic ===== -->
-
-
-
+<!-- ===== PATCH: Re-apply late-registered components (elevator-toggle / elevator-user-guide) ===== -->
 <script>
-/* ===== INTRO / LOADING CONTROLLER ===== */
 (function () {
-  const scene = document.getElementById('scene');
-  const overlay = document.getElementById('introOverlay');
-  const waiting = document.getElementById('introWaiting');
-  const walking = document.getElementById('introWalking');
-
-  const beginBtn = document.getElementById('introBegin');
-  const quitBtn = document.getElementById('introQuit');
-  const quitModal = document.getElementById('introQuitConfirm');
-  const quitYes = document.getElementById('introQuitYes');
-  const quitNo = document.getElementById('introQuitNo');
-
-  const fill = document.getElementById('introProgressFill');
-  const pctEl = document.getElementById('introProgressPct');
-  const statusEl = document.getElementById('introStatus');
-  const audioHintEl = document.getElementById('introAudioHint');
-
-  let assetsLoaded = false;
-  let sceneLoaded = false;
-  let managerLoaded = false;
-  let began = false;
-  let audioUnlocked = false;
-  let roomAudioStarted = false;
-  let lastPct = 0;
-
-  function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
-
-  function setPct(p){
-    const pp = clamp(p, 0, 100);
-    lastPct = Math.max(lastPct, pp);
-    fill.style.width = lastPct.toFixed(1) + '%';
-    pctEl.textContent = Math.round(lastPct) + '%';
-  }
-
-  function setStatus(s){
-    statusEl.textContent = s;
-  }
-
-  function isReady(){
-    // A-Frame assets + scene loaded is the most reliable signal.
-    return !!(assetsLoaded && sceneLoaded);
-  }
-
-  function tryPlay(v){
-    if (!v) return;
-    try { v.play().catch(()=>{}); } catch(e){}
-  }
-
-  function setControlsEnabled(enabled){
-    if (!scene) return;
-
-    const cams = scene.querySelectorAll('[camera]');
-    cams.forEach((cam)=>{
-      if (cam.hasAttribute('wasd-controls')) cam.setAttribute('wasd-controls', { enabled: enabled });
-      if (cam.hasAttribute('look-controls')) cam.setAttribute('look-controls', { enabled: enabled });
-      if (cam.hasAttribute('movement-controls')) cam.setAttribute('movement-controls', { enabled: enabled });
-      if (cam.hasAttribute('universal-controls')) cam.setAttribute('universal-controls', { enabled: enabled });
-      if (cam.hasAttribute('fps-controls')) cam.setAttribute('fps-controls', { enabled: enabled });
-    });
-  }
-
-  function startRoomAudio(){
-    if (roomAudioStarted) return;
-    const music = document.getElementById('fearRoomMusic');
-    if (music) {
-      music.volume = 0.85;
-      try {
-        music.play().then(()=>{ roomAudioStarted = true; }).catch(()=>{});
-      } catch(e){}
-    }
-  }
-
-  function unlockAudio(){
-    if (audioUnlocked) return;
-    audioUnlocked = true;
-    // Global flag so components that initialize later can self-unlock.
-    window.__fearAudioUnlocked = true;
-
-    // If Three.js AudioContext exists, resume it now (critical for positional / WebAudio media).
-    try {
-      if (window.THREE && THREE.AudioContext && THREE.AudioContext.getContext) {
-        const ctx = THREE.AudioContext.getContext();
-        if (ctx && ctx.state === 'suspended') ctx.resume();
-      }
-    } catch (e) {}
-
-    // Nudge in-room media video (test-video) so its audio pipeline is permitted later.
-    try {
-      const fv = document.getElementById('fearVideo');
-      if (fv) {
-        fv.muted = false;
-        fv.volume = 1.0;
-        fv.playsInline = true;
-        const p = fv.play();
-        if (p && p.catch) p.catch(() => {});
-      }
-    } catch (e) {}
-
-
-    // Enable audio for intro videos (Waiting + Walking in)
-    if (waiting) {
-      waiting.muted = false;
-      waiting.volume = 0.95;
-      tryPlay(waiting);
-    }
-    if (walking) {
-      walking.muted = false;
-      walking.volume = 0.95;
-    }
-
-    // If the intro is already gone, start room audio now
-    if (overlay && overlay.style.display === 'none') {
-      startRoomAudio();
-    }
-
-    if (audioHintEl) audioHintEl.textContent = 'Audio enabled.';
-  }
-
-  function revealScene(){
-    if (!scene) return;
-
-    // Show scene (fade-in)
-    scene.style.visibility = 'visible';
-    requestAnimationFrame(() => { scene.style.opacity = '1'; });
-
-    // Fade out overlay
-    overlay.classList.add('fadeOut');
+  function reapplyAttr(el, attr) {
+    if (!el || !el.hasAttribute(attr)) return;
+    const v = el.getAttribute(attr);
+    el.removeAttribute(attr);
+    // Re-apply next tick so A-Frame instantiates the component.
     setTimeout(() => {
-      overlay.style.display = 'none';
-      overlay.setAttribute('aria-hidden', 'true');
-    }, 950);
-
-    setControlsEnabled(true);
-
-    // Start room audio only once we are in the room
-    startRoomAudio();
-
-    // Focus scene so WASD works immediately
-    try { scene.focus(); } catch(e){}
+      if (v === null || v === '') el.setAttribute(attr, '');
+      else el.setAttribute(attr, v);
+    }, 0);
   }
 
-  function afterWalkingVideo(){
-    // If scene isn't ready yet, keep a clean loading state until it is.
-    const check = () => {
-      if (isReady()) {
-        setPct(100);
-        setStatus('Ready.');
-        revealScene();
-      } else {
-        // keep moving the bar gently if we have no progress
-        if (lastPct < 92) setPct(lastPct + 0.25);
-        setStatus('Loading…');
-        setTimeout(check, 250);
-      }
-    };
-    check();
+  function onSceneReady() {
+    reapplyAttr(document.querySelector('#industrial_elevator_1'), 'elevator-toggle');
+    reapplyAttr(document.querySelector('#rig'), 'elevator-user-guide');
   }
 
-  function startBegin(){
-    if (began) return;
-    began = true;
+  const scene = document.querySelector('a-scene');
+  if (!scene) return;
+  if (scene.hasLoaded) onSceneReady();
+  else scene.addEventListener('loaded', onSceneReady);
+})();
+</script>
+<!-- ===== END PATCH ===== -->
 
-    // BEGIN is a user gesture; use it to unlock intro audio if not already enabled
-    unlockAudio();
 
-    overlay.classList.add('begin');
 
-    // Swap videos
-    try { waiting.pause(); } catch(e){}
-    walking.currentTime = 0;
+<script id="eraoraIntroScript">
+(function () {
+  const BOOT = document.getElementById('bootScreen');
+  const BAR = document.getElementById('bootBar');
+  const PCT = document.getElementById('bootPct');
 
-    // Attempt to play (BEGIN is a user gesture, so it should work)
-    tryPlay(walking);
+  const INTRO = document.getElementById('introScreen');
+  const PANEL = document.getElementById('introPanel');
+  const WAITING = document.getElementById('introWaiting');
+  const WALKING = document.getElementById('introWalking');
+  const BEGIN = document.getElementById('beginBtn');
+  const AUDIO_STATUS = document.getElementById('audioStatus');
 
-    walking.addEventListener('ended', afterWalkingVideo, { once: true });
+  const QUIT = document.getElementById('quitBtn');
+  const QC = document.getElementById('quitConfirm');
+  const Q_CANCEL = document.getElementById('quitCancel');
+  const Q_OK = document.getElementById('quitConfirmBtn');
 
-    // Failsafe: if 'ended' doesn't fire (mobile quirks), fall back to duration-based timeout.
-    const scheduleFailsafe = () => {
-      let ms = 60000; // conservative default
-      const dur = (walking && isFinite(walking.duration)) ? walking.duration : 0;
-      if (dur > 1) ms = (dur * 1000) + 2000;
-      setTimeout(() => {
-        if (!overlay || overlay.style.display === 'none') return;
-        if (walking && walking.ended) return;
-        afterWalkingVideo();
-      }, ms);
-    };
+  const ROOM_MUSIC = document.getElementById('fearRoomMusic'); // existing <audio> in <a-assets>
 
-    if (walking && walking.readyState >= 1) {
-      scheduleFailsafe();
-    } else if (walking) {
-      walking.addEventListener('loadedmetadata', scheduleFailsafe, { once: true });
-      // Secondary backstop if metadata never arrives
-      setTimeout(() => {
-        if (walking && walking.readyState < 1) scheduleFailsafe();
-      }, 4000);
+  let audioEnabled = false;
+  let introStarted = false;
+  let introFinished = false;
+
+  function safePlay(media) {
+    if (!media) return Promise.resolve();
+    try { return media.play(); } catch (e) { return Promise.resolve(); }
+  }
+  function safePause(media) {
+    if (!media) return;
+    try { media.pause(); } catch (e) {}
+  }
+
+  function tryStartRoomAudio() {
+    if (!audioEnabled || !ROOM_MUSIC) return;
+    ROOM_MUSIC.muted = false;
+    safePlay(ROOM_MUSIC).catch(() => {});
+  }
+
+  function setAudioEnabled(on) {
+    audioEnabled = !!on;
+    const muted = !audioEnabled;
+
+    if (WAITING) WAITING.muted = muted;
+    if (WALKING) WALKING.muted = muted;
+    if (ROOM_MUSIC) ROOM_MUSIC.muted = !audioEnabled;
+
+    if (AUDIO_STATUS) {
+      AUDIO_STATUS.innerHTML = audioEnabled
+        ? 'Audio: <strong>ON</strong>'
+        : 'Audio: <strong>OFF</strong> — press <span class="keycap">ENTER</span> to enable';
+    }
+
+    if (audioEnabled) {
+      const modeWalking = INTRO && INTRO.classList.contains('mode-walking');
+      safePlay(modeWalking ? WALKING : WAITING).catch(() => {});
+      if (introFinished) tryStartRoomAudio();
     }
   }
 
-  // ---- Hook loading progress -------------------------------------------------
-  const assets = scene ? scene.querySelector('a-assets') : null;
-
-  if (assets) {
-    assets.addEventListener('loaded', () => {
-      assetsLoaded = true;
-      setPct(100);
-      if (isReady()) { setStatus('Ready.'); }
-    });
-
-    assets.addEventListener('progress', (e) => {
-      if (!e.detail) return;
-      const loaded = Number(e.detail.loaded || 0);
-      const total  = Number(e.detail.total  || 0);
-      if (total > 0) {
-        // keep some headroom for scene init
-        setPct((loaded / total) * 92);
-      }
-    });
+  function pausePlayerMovement() {
+    const rig = document.getElementById('rig');
+    if (!rig) return;
+    const c = rig.components && rig.components['rig-walk'];
+    if (c && c.pause) c.pause();
   }
 
-  if (scene) {
-    scene.addEventListener('loaded', () => {
-      sceneLoaded = true;
-      if (isReady()) setStatus('Ready.');
+  function resumePlayerMovement() {
+    const rig = document.getElementById('rig');
+    if (!rig) return;
+    const c = rig.components && rig.components['rig-walk'];
+    if (c && c.play) c.play();
+  }
+
+  function showIntro() {
+    if (BOOT) BOOT.classList.add('hide');
+
+    if (INTRO) {
+      INTRO.classList.add('show');
+      INTRO.setAttribute('aria-hidden', 'false');
+      INTRO.classList.add('mode-waiting');
+      INTRO.classList.remove('mode-walking');
+    }
+
+    if (WAITING) {
+      WAITING.currentTime = 0;
+      WAITING.loop = true;
+      WAITING.muted = !audioEnabled;
+      safePlay(WAITING).catch(() => {});
+    }
+    if (WALKING) {
+      WALKING.currentTime = 0;
+      WALKING.loop = false;
+      WALKING.muted = !audioEnabled;
+      safePause(WALKING);
+    }
+  }
+
+  function startWalkingVideo() {
+    if (introStarted) return;
+    introStarted = true;
+
+    // Begin click is a user gesture — if audio was enabled, this will help playback.
+    if (audioEnabled) {
+      safePlay(WAITING).catch(() => {});
+      safePlay(WALKING).catch(() => {});
+    }
+
+    if (PANEL) PANEL.classList.add('fade');
+
+    if (INTRO) {
+      INTRO.classList.remove('mode-waiting');
+      INTRO.classList.add('mode-walking');
+    }
+
+    if (WAITING) safePause(WAITING);
+
+    if (WALKING) {
+      WALKING.currentTime = 0;
+      WALKING.muted = !audioEnabled;
+      safePlay(WALKING).catch(() => {});
+      WALKING.onended = () => fadeIntoRoom();
+    } else {
+      fadeIntoRoom();
+    }
+  }
+
+  function fadeIntoRoom() {
+    if (introFinished) return;
+    introFinished = true;
+
+    if (INTRO) INTRO.classList.add('fade-to-room');
+
+    // Let the crossfade finish before stopping video audio & enabling the room.
+    setTimeout(() => {
+      safePause(WAITING);
+      safePause(WALKING);
+      try { if (WAITING) WAITING.currentTime = 0; } catch(e){}
+      try { if (WALKING) WALKING.currentTime = 0; } catch(e){}
+
+      resumePlayerMovement();
+      tryStartRoomAudio();
+    }, 1200);
+  }
+
+  // Quit flow
+  function openQuitConfirm() {
+    if (!QC) return;
+    QC.classList.add('show');
+    QC.setAttribute('aria-hidden', 'false');
+  }
+  function closeQuitConfirm() {
+    if (!QC) return;
+    QC.classList.remove('show');
+    QC.setAttribute('aria-hidden', 'true');
+  }
+
+  // Loading progress (simple count-based progress)
+  function buildLoadTasks() {
+    const tasks = [];
+    let total = 0;
+    let done = 0;
+
+    function bump() {
+      done++;
+      const pct = total ? Math.round((done / total) * 100) : 100;
+      if (BAR) BAR.style.width = pct + '%';
+      if (PCT) PCT.textContent = pct + '%';
+    }
+
+    function add(p) {
+      total++;
+      tasks.push(Promise.resolve(p).then(bump, bump));
+    }
+
+    const scene = document.querySelector('a-scene');
+    const assets = scene && scene.querySelector('a-assets');
+
+    add(new Promise((res) => {
+      if (scene && scene.hasLoaded) return res();
+      if (scene) scene.addEventListener('loaded', () => res(), { once: true });
+      else res();
+    }));
+
+    add(new Promise((res) => {
+      if (!assets) return res();
+      assets.addEventListener('loaded', () => res(), { once: true });
+      // Fail-open fallback (avoid infinite loading if one asset 404s)
+      setTimeout(() => res(), 20000);
+    }));
+
+    if (assets) {
+      const els = Array.from(assets.querySelectorAll('img, video, audio'));
+      els.forEach(el => {
+        add(new Promise((res) => {
+          const tag = el.tagName.toLowerCase();
+          const doneEvt = () => res();
+          const errEvt = () => res();
+
+          if (tag === 'img') {
+            if (el.complete && el.naturalWidth > 0) return res();
+            el.addEventListener('load', doneEvt, { once: true });
+            el.addEventListener('error', errEvt, { once: true });
+          } else if (tag === 'video') {
+            if (el.readyState >= 2) return res();
+            el.addEventListener('loadeddata', doneEvt, { once: true });
+            el.addEventListener('error', errEvt, { once: true });
+            try { el.load(); } catch(e){}
+          } else if (tag === 'audio') {
+            if (el.readyState >= 2) return res();
+            el.addEventListener('canplaythrough', doneEvt, { once: true });
+            el.addEventListener('loadeddata', doneEvt, { once: true });
+            el.addEventListener('error', errEvt, { once: true });
+            try { el.load(); } catch(e){}
+          } else {
+            res();
+          }
+        }));
+      });
+    }
+
+    [WAITING, WALKING].forEach(v => {
+      if (!v) return;
+      add(new Promise((res) => {
+        if (v.readyState >= 2) return res();
+        v.addEventListener('loadeddata', () => res(), { once: true });
+        v.addEventListener('error', () => res(), { once: true });
+        try { v.load(); } catch(e){}
+      }));
     });
+
+    return Promise.all(tasks);
   }
 
-  if (window.THREE && THREE.DefaultLoadingManager) {
-    const M = THREE.DefaultLoadingManager;
-    M.onProgress = function (url, loaded, total) {
-      if (total > 0) setPct((loaded / total) * 88);
-    };
-    M.onLoad = function () {
-      managerLoaded = true;
-      if (isReady()) setStatus('Ready.');
-    };
-  }
-
-  // ---- Controls and autoplay state ------------------------------------------
-  setControlsEnabled(false);
-  setStatus('Loading…');
-  setPct(2);
-
-  // Waiting video loops immediately (muted autoplay)
-  tryPlay(waiting);
-
-  // ENTER unlocks audio
+  // --- Event wiring ---
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') unlockAudio();
-
-    // ESC closes quit modal if open
-    if (e.key === 'Escape' && quitModal && quitModal.classList.contains('show')) {
-      quitModal.classList.remove('show');
-      quitModal.setAttribute('aria-hidden', 'true');
+    if (e.key === 'Enter') {
+      if (!audioEnabled) setAudioEnabled(true);
     }
-  });
+    if (e.key === 'Escape') {
+      if (QC && QC.classList.contains('show')) closeQuitConfirm();
+    }
+  }, { passive: true });
 
+  if (BEGIN) BEGIN.addEventListener('click', () => startWalkingVideo());
 
-  // Clicking anywhere on the intro also unlocks audio (useful on mobile)
-  if (overlay) {
-    overlay.addEventListener('pointerdown', () => { unlockAudio(); }, { passive: true });
-  }
+  if (QUIT) QUIT.addEventListener('click', openQuitConfirm);
+  if (Q_CANCEL) Q_CANCEL.addEventListener('click', closeQuitConfirm);
+  if (QC) QC.addEventListener('click', (e) => { if (e.target === QC) closeQuitConfirm(); });
+  if (Q_OK) Q_OK.addEventListener('click', () => { window.location.href = 'https://www.enricopoli.com/pagex'; });
 
+  // Initial state: pause player movement until intro finishes.
+  pausePlayerMovement();
 
-  // BEGIN
-  if (beginBtn) beginBtn.addEventListener('click', startBegin);
+  // Re-apply pause once the scene is guaranteed to have initialized components.
+  const scene = document.querySelector('a-scene');
+  if (scene) scene.addEventListener('loaded', pausePlayerMovement, { once: true });
 
-  // QUIT + confirm
-  if (quitBtn) quitBtn.addEventListener('click', () => {
-    quitModal.classList.add('show');
-    quitModal.setAttribute('aria-hidden', 'false');
-  });
-  if (quitNo) quitNo.addEventListener('click', () => {
-    quitModal.classList.remove('show');
-    quitModal.setAttribute('aria-hidden', 'true');
-  });
-  if (quitYes) quitYes.addEventListener('click', () => {
-    window.location.href = 'https://www.enricopoli.com/pagex';
-  });
+  if (ROOM_MUSIC) { ROOM_MUSIC.muted = true; try { ROOM_MUSIC.pause(); } catch(e){} }
 
+  setAudioEnabled(false);
+
+  buildLoadTasks().then(showIntro).catch(showIntro);
 })();
 </script>
 
