@@ -416,7 +416,33 @@ AFRAME.registerComponent('light-beam', {
       background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAAAyBAMAAADsEZWCAAAAGFBMVEUAAAA5OTkAAABMTExERERmZmYzMzMyMjJOUl6NAAAACHRSTlMAwD9/cN9/QbTD42kAAABcSURBVDjLxZFBCgAhDMNs7w/2/o+1BFmQmBQE38aSNo0t1Q/60M8+aF5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0n4bWyX0wF2wygAAAABJRU5ErkJggg==");
       opacity: 0.05;
     }
-  </style>
+  
+    /* UI: Clickable finger indicator (center screen) */
+    #clickFinger{
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      width: 34px;
+      height: 34px;
+      transform: translate(16px, 10px) scale(0.92);
+      opacity: 0;
+      pointer-events: none;
+      z-index: 9998;
+      transition: opacity 120ms ease, transform 120ms ease;
+      filter: drop-shadow(0 6px 10px rgba(0,0,0,0.65));
+    }
+    #clickFinger.show{
+      opacity: 0.96;
+      transform: translate(16px, 10px) scale(1.0);
+    }
+
+    #clickFinger .fingerGlyph{
+      font: 34px/34px system-ui, -apple-system, Segoe UI Symbol, Segoe UI, Roboto, Arial, sans-serif;
+      color: rgba(255,255,255,0.95);
+      transform: rotate(-10deg);
+      display: block;
+    }
+</style>
 
 <style>
   /* ===== UI: Elevator User Guide (2D overlay, outside the 3D scene) ===== */
@@ -488,169 +514,6 @@ AFRAME.registerComponent('light-beam', {
 
   <!-- Prevent favicon.ico 404 -->
   <link rel="icon" href="data:,">
-
-<style>
-  /* ===== Intro overlay (same logic as opening_test_v1) ===== */
-  #sceneWrap{
-    position: fixed; inset: 0; z-index: 0;
-    opacity: 0;
-    transition: opacity 1800ms ease;
-    pointer-events: none;
-  }
-  body.scene-live #sceneWrap{ opacity: 1; pointer-events: auto; }
-
-  #introOverlay{
-    position: fixed; inset: 0; z-index: 10000;
-    display: grid; place-items: center;
-    background: none;
-    opacity: 1;
-    transition: opacity 900ms ease;
-    pointer-events: auto;
-  }
-  #introOverlay.hidden{ opacity: 0; pointer-events: none; }
-
-  /* Backdrop behind intro videos/panel so we can fade it independently */
-  #introBackdrop{
-    position:absolute; inset:0; z-index:0;
-    background:#000;
-    opacity:1;
-    transition: opacity 1800ms ease;
-    pointer-events:none;
-  }
-
-  #introVideos{ position:absolute; inset:0; overflow:hidden; z-index:1; transition: opacity 1800ms ease; }
-  #introVideos video{
-    position:absolute; inset:0;
-    width:100%; height:100%;
-    object-fit:cover;
-    opacity:0;
-    transition: opacity 650ms ease;
-  }
-  #introVideos video.active{ opacity:1; }
-
-  /* Fade intro videos/backdrop away while revealing the 3D scene behind */
-  #introOverlay.to-scene #introVideos{ opacity:0; }
-  #introOverlay.to-scene #introBackdrop{ opacity:0; }
-
-  #introPanel{
-    position: relative; z-index: 2;
-    width: min(760px, calc(100vw - 32px));
-    margin: 0 16px;
-    border-radius: 16px;
-    background: rgba(0,0,0,0.58);
-    border: 1px solid rgba(255,255,255,0.10);
-    box-shadow: 0 20px 80px rgba(0,0,0,0.55);
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
-    padding: 18px 18px 16px 18px;
-    color: rgba(255,255,255,0.92);
-    font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-    transform: translateY(0);
-    opacity: 1;
-    transition: opacity 600ms ease, transform 600ms ease;
-    pointer-events: auto;
-  }
-  #introPanel.fadeOut{
-    opacity: 0;
-    transform: translateY(10px);
-    pointer-events: none;
-  }
-
-  #introPanel .kicker{
-    font-size: 12px;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    opacity: 0.92;
-    margin-bottom: 8px;
-  }
-  #introPanel .title{
-    font-size: 18px;
-    line-height: 1.25;
-    margin: 0 0 10px 0;
-    color: rgba(255,255,255,0.96);
-  }
-  #introPanel .body{ font-size: 13px; opacity: 0.96; }
-  #introPanel .body p{ margin: 0 0 10px 0; }
-  #introPanel .frameK{
-    font-size: 11px;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    opacity: 0.85;
-    margin: 14px 0 8px 0;
-  }
-  #introPanel hr{
-    border: none;
-    border-top: 1px solid rgba(255,255,255,0.10);
-    margin: 12px 0;
-  }
-  #introPanel .controls{
-    display: grid;
-    gap: 6px;
-    margin: 8px 0 10px 0;
-    padding-left: 10px;
-    border-left: 2px solid rgba(255,255,255,0.12);
-  }
-  #introPanel .muted{ opacity: 0.75; }
-
-  .ctaRow{
-    display:flex;
-    align-items:center;
-    justify-content: space-between;
-    gap: 12px;
-    margin-top: 12px;
-  }
-  .cta{
-    font-size: 13px;
-    opacity: 0.95;
-  }
-  .cta b{ color: #fff; }
-
-  .beginBtn{
-    appearance: none;
-    border: 1px solid rgba(255,255,255,0.22);
-    background: rgba(255,255,255,0.08);
-    color: rgba(255,255,255,0.95);
-    font-weight: 800;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    padding: 10px 14px;
-    border-radius: 10px;
-    cursor: pointer;
-    transition: transform 120ms ease, background 120ms ease, opacity 120ms ease;
-  }
-  .beginBtn:hover{ transform: translateY(-1px); background: rgba(255,255,255,0.12); }
-  .beginBtn:active{ transform: translateY(0px); }
-  .beginBtn:disabled{
-    opacity: 0.45;
-    cursor: not-allowed;
-    transform: none;
-  }
-
-  .sub{
-    margin-top: 8px;
-    font-size: 12px;
-    opacity: 0.75;
-  }
-
-  /* Loading bar */
-  .loadStatus{
-    font-size: 12px;
-    opacity: 0.8;
-    margin: 8px 0 6px 0;
-  }
-  .loadBar{
-    height: 8px;
-    border-radius: 999px;
-    background: rgba(255,255,255,0.10);
-    overflow: hidden;
-  }
-  .loadBar > div{
-    height: 100%;
-    width: 0%;
-    background: rgba(255,255,255,0.75);
-    transition: width 220ms ease;
-  }
-</style>
 </head>
 <body>
 
@@ -661,73 +524,24 @@ AFRAME.registerComponent('light-beam', {
   <ul>
     <li><strong>Move:</strong> WASD / Arrow Keys</li>
     <li><strong>Look:</strong> Mouse</li>
-        <li><strong>Unlock mouse:</strong> Press <strong>ESC</strong> to release the cursor</li>
-<li><strong>Interact:</strong> Press <span class="keycap keycap-ask">ASK</span> to enable clicks, then click the call button</li>
-    <li><strong>Elevator:</strong> Press the button to open/close doors</li>
+        <li><strong>Interact:</strong> When the finger appears, click the call button</li>
+    <li><strong>Elevator:</st
+<div id="clickFinger" aria-hidden="true"><span class="fingerGlyph">☛</span></div>
+rong> Press the button to open/close doors</li>
   </ul>
   <p class="muted">Step back to dismiss this guide.</p>
 </div>
 <!-- ===== END UI OVERLAY ===== -->
 
-<!-- ===== INTRO OVERLAY (waiting loop + walking-in + panels) ===== -->
-<div id="introOverlay" aria-hidden="false">
-  <div id="introBackdrop"></div>
-  <div id="introVideos" aria-hidden="true">
-    <video id="introWaiting" preload="metadata" playsinline webkit-playsinline loop crossorigin="anonymous">
-      <source src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/fear-room/video/Waiting.mp4" type="video/mp4"/>
-    </video>
-    <video id="introWalking" preload="metadata" playsinline webkit-playsinline crossorigin="anonymous">
-      <source src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/fear-room/video/Walking%20in.mp4" type="video/mp4"/>
-    </video>
-  </div>
-
-  <div id="introPanel">
-    <div class="kicker">ERA ORA — BEYOND THE BOOK</div>
-    <div class="title">A retrospective from the future on disruption in the world of work.</div>
-
-    <div class="body">
-      <div class="frameK">FRAME 1 — WHAT THIS IS ABOUT</div>
-      <p>ERA ORA — BEYOND THE BOOK is an exhibition about disruption in the world of work—how roles, identities, and everyday systems shift under technological change, and what gets reclassified as “normal” after the shock.</p>
-      <p>The experience is framed as a retrospective from the future: as if you are visiting the exhibition ten years from now, looking back on the present as the moment when the rules began to change. It’s a deliberate pretense—an archival stance—meant to make today feel observable, even strange, through the distance of time.</p>
-
-      <hr/>
-
-      <div class="frameK">FRAME 2 — THE 3D EXPERIENCE + HOW TO NAVIGATE</div>
-      <p>You are entering a speculative 3D interpretation of the exhibition: a navigable space where video and spatial encounters work together. There is no single route—meaning is built through movement, proximity, and attention.</p>
-      <div class="controls">
-        <div><b>Move:</b> W A S D or Arrow keys</div>
-        <div><b>Look around:</b> Mouse</div>
-        <div><b>Explore:</b> Approach screens/objects to encounter scenes and fragments</div>
-      </div>
-      <p>When you’re ready, press <b>BEGIN</b> to start.</p>
-
-      <hr/>
-
-      <div class="frameK">FRAME 3 — LOADING</div>
-      <p class="muted">While you read, the room is loading in the background.</p>
-      <div id="loadStatus" class="loadStatus">Loading…</div>
-      <div class="loadBar"><div id="loadBarFill"></div></div>
-    </div>
-
-    <div class="ctaRow">
-      <div class="cta"><span id="ctaText">Press <b>Enter</b> to activate audio (recommended).</span></div>
-      <button id="beginBtn" class="beginBtn" type="button" disabled>BEGIN</button>
-    </div>
-    <div class="sub" id="subText">Tip: press <b>ESC</b> anytime to release the cursor.</div>
-  </div>
-</div>
-<!-- ===== END INTRO OVERLAY ===== -->
-
 <div id="hint" style="display:none"></div>
 <div class="overlay grain"></div>
-<div id="sceneWrap">
 <a-scene tabindex="0" background="color: #020202" fog="type: exponential; color: #050505; density: 0.00022" renderer="antialias: true; colorManagement: true; physicallyCorrectLights: true; exposure: 0.92; highRefreshRate: true;" s4-mercury-manager="" shadow="type: pcfsoft; autoUpdate: true;" vr-mode-ui="enabled: false">
 <a-assets>
-<video crossorigin="anonymous" id="fearVideo" loop playsinline webkit-playsinline preload="metadata">
-  <source data-src="fear-room/video/test-video.mp4" type="video/mp4"/>
+<video autoplay crossorigin="anonymous" id="fearVideo" loop playsinline webkit-playsinline preload="auto">
+<source src="fear-room/video/test-video.mp4" type="video/mp4"/>
 </video>
-<audio crossorigin="anonymous" id="fearRoomMusic" loop preload="metadata">
-  <source data-src="fear-room/music/fear_room_music/fear_room_music.mp3" type="audio/mpeg"/>
+<audio crossorigin="anonymous" id="fearRoomMusic" loop preload="auto">
+  <source src="fear-room/music/fear_room_music/fear_room_music.mp3" type="audio/mpeg"/>
 </audio>
 
 <!-- Station 3 panel textures -->
@@ -1566,13 +1380,64 @@ AFRAME.registerComponent('light-beam', {
 <a-entity id="rig" position="9 0 -7.5" rotation="0 180 0" rig-walk="speed: 2.6; radius: 0.28" elevator-user-guide="target: #industrial_elevator_1; showDistance: 6">
 <a-entity camera="fov: 60; near: 0.05; far: 1000; zoom: 1.08" id="playerCam" initial-yaw="yaw: 0" look-controls="pointerLockEnabled: true" pitch-clamp="min: -80; max: 80" position="0 1.6 0" rotation="0 0 0">
 <a-entity id="headLamp" light="type: spot; color: #fffef0; intensity: 0.8; angle: 50; penumbra: 0.5; distance: 10; decay: 1.5; castShadow: true" position="0 0 0"></a-entity>
-<a-entity cursor="rayOrigin: mouse"></a-entity>
+<a-entity id="clickCursor"
+          cursor="rayOrigin: entity"
+          raycaster="objects: .clickable; far: 6"
+          finger-on-clickable="maxDistance: 6; finger: #clickFinger"></a-entity>
 </a-entity>
 </a-entity>
 <script>
       (function () {
         const DEG2RAD = Math.PI / 180;
         const EPS = 0.001;
+
+
+        // Show a small “finger” indicator (2D overlay) when the center ray hits a .clickable.
+        AFRAME.registerComponent('finger-on-clickable', {
+          schema: {
+            maxDistance: { type: 'number', default: 6 },
+            finger: { type: 'string', default: '#clickFinger' }
+          },
+          init: function () {
+            this._fingerEl = null;
+            this._shown = false;
+
+            const resolveFinger = () => {
+              this._fingerEl = document.querySelector(this.data.finger);
+              return !!this._fingerEl;
+            };
+
+            // Try immediately, then again once the scene is ready (safe for slow DOM / loaders).
+            resolveFinger();
+            if (this.el.sceneEl) {
+              this.el.sceneEl.addEventListener('loaded', () => resolveFinger(), { once: true });
+            }
+
+            this._set = (v) => {
+              if (!this._fingerEl) resolveFinger();
+              if (!this._fingerEl) return;
+              if (v === this._shown) return;
+              this._shown = v;
+              this._fingerEl.classList.toggle('show', v);
+            };
+
+            this._onHit = (e) => {
+              const ints = (e && e.detail && e.detail.intersections) ? e.detail.intersections : [];
+              this._set(!!(ints.length && ints[0].distance <= this.data.maxDistance));
+            };
+
+            this._onClear = () => this._set(false);
+
+            this.el.addEventListener('raycaster-intersection', this._onHit);
+            this.el.addEventListener('raycaster-intersection-cleared', this._onClear);
+          },
+          remove: function () {
+            this.el.removeEventListener('raycaster-intersection', this._onHit);
+            this.el.removeEventListener('raycaster-intersection-cleared', this._onClear);
+          }
+        });
+
+
 
         
         AFRAME.registerComponent('screen-surface', {
@@ -4161,7 +4026,64 @@ AFRAME.registerComponent('pbr-carpet', {
          material="shader: flat; src: #photo_label_tex; transparent: true; opacity: 1; side: double; depthWrite: false; depthTest: true; polygonOffset: true; polygonOffsetFactor: -4; polygonOffsetUnits: -4">
 </a-plane>
 </a-scene>
-</div>
+<script>
+(function(){
+  const hint = document.getElementById('hint');
+  function showHint(msg){
+    if(!hint) return;
+    hint.style.display = 'block';
+    hint.innerHTML = msg;
+  }
+  function hideHint(){ if(hint) hint.style.display = 'none'; }
+
+  // Try to start media as soon as possible (may be blocked by autoplay policies).
+  window.addEventListener('DOMContentLoaded', () => {
+    const v = document.querySelector('#fearVideo');
+    const a = null; // legacy (no longer used)
+    const m = document.querySelector('#fearRoomMusic');
+
+    async function tryStart(){
+      let blocked = false;
+
+      if (v){
+        v.muted = true;
+        v.volume = 0.0;
+        try { await v.play(); } catch(e){ blocked = true; }
+      }
+      if (m){
+        m.muted = false;
+        m.volume = 0.12;
+        try { await m.play(); } catch(e){ blocked = true; }
+      }
+
+      if (blocked){
+        showHint('<b>Audio blocked by browser (click to enable)</b> • click once anywhere to enable sound');
+        const unlock = async () => {
+          // Resume WebAudio (needed for positional video sound).
+          try { if (window.THREE && THREE.AudioContext && THREE.AudioContext.getContext) { const c = THREE.AudioContext.getContext(); if (c && c.state === 'suspended') await c.resume(); } } catch(e){}
+          try {
+            if (v){ v.muted = false; v.volume = 1.0; await v.play().catch(()=>{}); }
+          } catch(e){}
+          try {
+            if (a){ a.muted = false; await a.play(); }
+          } catch(e){}
+          try {
+            if (m){ m.muted = false; m.volume = 0.12; await m.play(); }
+          } catch(e){}
+          hideHint();
+        };
+        window.addEventListener('pointerdown', unlock, { once: true });
+        window.addEventListener('keydown', unlock, { once: true });
+      } else {
+        hideHint();
+      }
+    }
+
+    tryStart();
+  });
+})();
+</script>
+
 
 <script>
   // Convert near-black pixels in an image texture to transparent alpha (so labels "print" directly on the wall).
@@ -4299,367 +4221,5 @@ AFRAME.registerComponent('pbr-carpet', {
 </script>
 <!-- ===== END INSERTED: Elevator User Guide Overlay Logic ===== -->
 
-
-
-<script>
-(function(){
-  const overlay = document.getElementById('introOverlay');
-  const panel = document.getElementById('introPanel');
-  const ctaText = document.getElementById('ctaText');
-  const subText = document.getElementById('subText');
-  const beginBtn = document.getElementById('beginBtn');
-
-  const vWait = document.getElementById('introWaiting');
-  const vWalk = document.getElementById('introWalking');
-
-  const sceneWrap = document.getElementById('sceneWrap');
-  const scene = document.querySelector('a-scene');
-  const assets = document.querySelector('a-assets');
-  const fearVideo = document.getElementById('fearVideo');
-  const fearMusic = document.getElementById('fearRoomMusic');
-
-  const loadStatus = document.getElementById('loadStatus');
-  const loadBarFill = document.getElementById('loadBarFill');
-
-  let audioUnlocked = false; // first Enter/click (required by browser policy)
-  let started = false;       // BEGIN/second Enter (start experience)
-  let fadingToScene = false;
-
-  // Crossfade lead time: start fading this many seconds before the end of the walking-in video.
-  const WALK_TO_SCENE_LEAD_SEC = 2.0;
-
-  // ---------- Utils ----------
-  function clamp01(x){ return Math.max(0, Math.min(1, x)); }
-
-  function rampVolume(mediaEl, from, to, ms){
-    if (!mediaEl) return;
-    const t0 = performance.now();
-    try { mediaEl.volume = clamp01(from); } catch(e){}
-    const tick = () => {
-      const t = (performance.now() - t0) / ms;
-      const k = clamp01(t);
-      try { mediaEl.volume = clamp01(from + (to - from) * k); } catch(e){}
-      if (k < 1) requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-  }
-
-  async function safePlay(el){
-    if (!el) return false;
-    try {
-      const p = el.play();
-      if (p && p.catch) await p;
-      return true;
-    } catch(e){
-      return false;
-    }
-  }
-
-  function setActiveVideo(which){
-    if (!vWait || !vWalk) return;
-    if (which === 'wait'){
-      vWait.classList.add('active');
-      vWalk.classList.remove('active');
-    } else {
-      vWalk.classList.add('active');
-      vWait.classList.remove('active');
-    }
-  }
-
-  function setSourcesFromData(el){
-    if (!el) return;
-    const dataSrc = el.getAttribute('data-src');
-    if (dataSrc && !el.getAttribute('src')) el.setAttribute('src', dataSrc);
-    const sources = el.querySelectorAll('source[data-src]');
-    sources.forEach(s => { if (!s.getAttribute('src')) s.setAttribute('src', s.getAttribute('data-src')); });
-  }
-
-  // ---------- Loading progress ----------
-  const loader = {
-    total: 0,
-    done: 0,
-    sceneDone: false,
-    started: false
-  };
-
-  function updateLoadUI(){
-    const pct = loader.total ? Math.round((loader.done / loader.total) * 100) : 0;
-    if (loadBarFill) loadBarFill.style.width = pct + '%';
-
-    if (!loadStatus) return;
-    if (!audioUnlocked){
-      loadStatus.textContent = `Loading… ${pct}% (textures loading; audio/media will load after ENTER)`;
-    } else if (!loader.sceneDone){
-      loadStatus.textContent = `Loading… ${pct}% (preparing room)`;
-    } else {
-      loadStatus.textContent = `Ready — ${pct}%`;
-    }
-  }
-
-  function markDoneOnce(){
-    loader.done = Math.min(loader.total, loader.done + 1);
-    updateLoadUI();
-  }
-
-  function startLoadTracker(){
-    if (loader.started) return;
-    loader.started = true;
-
-    const trackEl = (el) => {
-      if (!el) return;
-      const tag = (el.tagName || '').toLowerCase();
-      loader.total++;
-
-      // Immediate check
-      const isComplete = () => {
-        if (tag === 'img') return el.complete && (el.naturalWidth || el.width);
-        if (tag === 'video' || tag === 'audio') return (el.readyState >= 2);
-        if (tag === 'a-asset-item') return !!(el.getObject3D && el.getObject3D('mesh')); // not reliable
-        return false;
-      };
-
-      if (isComplete()){
-        markDoneOnce();
-        return;
-      }
-
-      const done = () => {
-        el.removeEventListener('load', done);
-        el.removeEventListener('loadeddata', done);
-        el.removeEventListener('canplaythrough', done);
-        el.removeEventListener('error', done);
-        markDoneOnce();
-      };
-
-      el.addEventListener('load', done, { once: true });
-      el.addEventListener('loadeddata', done, { once: true });
-      el.addEventListener('canplaythrough', done, { once: true });
-      el.addEventListener('error', done, { once: true });
-    };
-
-    // Track existing a-assets children (images, videos, audio, asset-items)
-    if (assets){
-      Array.from(assets.children).forEach(trackEl);
-    }
-
-    // Track the a-scene itself as one item (render pipeline ready)
-    loader.total++;
-    const sceneDone = () => {
-      if (loader.sceneDone) return;
-      loader.sceneDone = true;
-      markDoneOnce();
-    };
-    if (!scene || scene.hasLoaded) sceneDone();
-    else scene.addEventListener('loaded', sceneDone, { once: true });
-
-    updateLoadUI();
-
-    // Safety: tick updates in case some elements were already complete but missed.
-    const interval = setInterval(() => {
-      if (loader.done >= loader.total) { clearInterval(interval); return; }
-      updateLoadUI();
-    }, 250);
-  }
-
-  // ---------- Scene readiness gate ----------
-  const sceneReadyP = new Promise((resolve) => {
-    if (!scene) { resolve(); return; }
-    if (scene.hasLoaded) { resolve(); return; }
-    scene.addEventListener('loaded', () => resolve(), { once: true });
-  });
-
-  // ---------- Startup / staged preloads ----------
-  function primeAframeMedia(){
-    // Keep in-scene media silent until we enter the scene.
-    [fearVideo, fearMusic].forEach(el => {
-      if (!el) return;
-      try { el.muted = true; el.volume = 0; } catch(e){}
-      try { el.pause(); } catch(e){}
-    });
-
-    // Ensure scene doesn't intercept input while intro is up.
-    if (sceneWrap) sceneWrap.style.pointerEvents = 'none';
-  }
-
-  async function startIntroLoop(){
-    if (!vWait) return;
-    vWait.loop = true;
-    vWait.playsInline = true;
-
-    // Guaranteed autoplay: muted.
-    vWait.muted = true;
-    vWait.volume = 0;
-
-    setActiveVideo('wait');
-    await safePlay(vWait);
-  }
-
-  function startBackgroundPreloads(){
-    // Start downloading the "walking in" video (so the crossfade is seamless).
-    if (vWalk){
-      try { vWalk.preload = 'auto'; } catch(e){}
-      try { vWalk.load(); } catch(e){}
-    }
-
-    // Start downloading in-scene media only after we have a user gesture.
-    setSourcesFromData(fearVideo);
-    setSourcesFromData(fearMusic);
-
-    try { if (fearVideo) fearVideo.load(); } catch(e){}
-    try { if (fearMusic) fearMusic.load(); } catch(e){}
-  }
-
-  async function unlockAudio(){
-    if (audioUnlocked) return;
-    audioUnlocked = true;
-
-    if (ctaText) ctaText.innerHTML = 'Audio enabled. Press <b>BEGIN</b> to start.';
-    if (subText) subText.textContent = 'You can also press Enter to begin.';
-    if (beginBtn) beginBtn.disabled = false;
-
-    // Unmute the waiting loop (must happen inside a user gesture).
-    if (vWait){
-      try { vWait.muted = false; } catch(e){}
-      try { vWait.volume = 0; } catch(e){}
-      await safePlay(vWait);
-      rampVolume(vWait, 0, 1, 500);
-    }
-
-    // Begin preloading the remaining media while the user is still reading.
-    startBackgroundPreloads();
-    updateLoadUI();
-  }
-
-  async function begin(){
-    if (started || !audioUnlocked) return;
-    started = true;
-    if (beginBtn) beginBtn.disabled = true;
-
-    // Fade panel out.
-    if (panel) panel.classList.add('fadeOut');
-
-    // Prepare and start the walking-in video, crossfade visually + audibly.
-    if (vWalk){
-      try { vWalk.muted = false; } catch(e){}
-      vWalk.currentTime = 0;
-      vWalk.loop = false;
-      vWalk.playsInline = true;
-      vWalk.volume = 0;
-
-      setActiveVideo('walk');
-      await safePlay(vWalk);
-      rampVolume(vWalk, 0, 1, 650);
-    }
-
-    // Fade the waiting loop out and stop it.
-    if (vWait){
-      rampVolume(vWait, (typeof vWait.volume === 'number' ? vWait.volume : 1), 0, 650);
-      setTimeout(() => { try { vWait.pause(); } catch(e){} }, 900);
-    }
-
-    // Crossfade to A-Frame near the end of the walking video.
-    const requestSceneTransition = () => {
-      if (fadingToScene) return;
-      fadingToScene = true;
-      sceneReadyP.then(() => transitionToScene());
-    };
-
-    if (vWalk){
-      const maybe = () => {
-        if (!vWalk.duration || !isFinite(vWalk.duration)) return;
-        const remaining = vWalk.duration - vWalk.currentTime;
-        if (remaining <= WALK_TO_SCENE_LEAD_SEC) requestSceneTransition();
-      };
-      vWalk.addEventListener('timeupdate', maybe);
-      vWalk.addEventListener('ended', () => {
-        // If scene isn't ready, hold the last frame.
-        try { vWalk.pause(); vWalk.currentTime = Math.max(0, (vWalk.duration || 0) - 0.05); } catch(e){}
-        requestSceneTransition();
-      }, { once: true });
-    } else {
-      requestSceneTransition();
-    }
-  }
-
-  async function transitionToScene(){
-    // Fade in the scene behind while fading out the intro video/backdrop (true crossfade).
-    document.body.classList.add('scene-live');
-    if (overlay) overlay.classList.add('to-scene');
-
-    // Start in-scene media as we enter (audio is already unlocked).
-    try {
-      if (fearVideo){
-        setSourcesFromData(fearVideo);
-        // visual only; keep silent
-        fearVideo.muted = true;
-        fearVideo.volume = 0.0;
-        await safePlay(fearVideo);
-      }
-    } catch(e){}
-
-    try {
-      if (fearMusic){
-        setSourcesFromData(fearMusic);
-        fearMusic.muted = false;
-        fearMusic.volume = 0.0;
-        await safePlay(fearMusic);
-        rampVolume(fearMusic, 0, 0.12, 1600);
-      }
-    } catch(e){}
-
-    // Fade out walking video audio as we leave it.
-    if (vWalk) rampVolume(vWalk, (typeof vWalk.volume === 'number' ? vWalk.volume : 1), 0, 1600);
-
-    // Then fade the whole overlay away (panel is already gone).
-    setTimeout(() => { if (overlay) overlay.classList.add('hidden'); }, 1200);
-
-    // Let A-Frame receive input after the crossfade.
-    if (sceneWrap) sceneWrap.style.pointerEvents = 'auto';
-
-    // Hard-stop intro videos after fade to avoid CPU/audio bleed.
-    setTimeout(() => {
-      if (overlay) overlay.style.display = 'none';
-      [vWait, vWalk].forEach(v => { if (!v) return; try { v.pause(); } catch(e){} });
-    }, 2600);
-  }
-
-  function attachHandlers(){
-    const handleEnter = async (e) => {
-      if (e && e.preventDefault) e.preventDefault();
-      if (!audioUnlocked) return unlockAudio();
-      return begin();
-    };
-
-    window.addEventListener('keydown', (e) => {
-      if (e.repeat) return;
-      if (e.code === 'Enter' || e.key === 'Enter') handleEnter(e);
-    }, { passive: false });
-
-    if (overlay){
-      overlay.addEventListener('pointerdown', (e) => {
-        // Let the Begin button handle itself.
-        if (e && e.target && (e.target.id === 'beginBtn')) return;
-        handleEnter(e);
-      }, { passive: false });
-    }
-
-    if (beginBtn){
-      beginBtn.addEventListener('click', (e) => {
-        if (e && e.preventDefault) e.preventDefault();
-        e.stopPropagation();
-        if (!audioUnlocked) return unlockAudio();
-        return begin();
-      });
-    }
-  }
-
-  window.addEventListener('DOMContentLoaded', async () => {
-    primeAframeMedia();
-    startLoadTracker();
-    attachHandlers();
-    await startIntroLoop();
-  });
-})();
-</script>
 </body>
 </html>
