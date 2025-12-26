@@ -1960,6 +1960,12 @@ AFRAME.registerComponent('positional-media-audio', {
     // Reliable user-gesture unlock.
     window.addEventListener('pointerdown', unlock, { once: true });
     window.addEventListener('keydown', unlock, { once: true });
+
+    // If audio was already unlocked by the intro overlay (before this component initialized),
+    // immediately attempt to unlock now so you can hear in-room video audio without another click.
+    try {
+      if (window.__fearAudioUnlocked) unlock();
+    } catch (e) {}
   },
 
   update: function () {
@@ -4501,6 +4507,29 @@ AFRAME.registerComponent('pbr-carpet', {
   function unlockAudio(){
     if (audioUnlocked) return;
     audioUnlocked = true;
+    // Global flag so components that initialize later can self-unlock.
+    window.__fearAudioUnlocked = true;
+
+    // If Three.js AudioContext exists, resume it now (critical for positional / WebAudio media).
+    try {
+      if (window.THREE && THREE.AudioContext && THREE.AudioContext.getContext) {
+        const ctx = THREE.AudioContext.getContext();
+        if (ctx && ctx.state === 'suspended') ctx.resume();
+      }
+    } catch (e) {}
+
+    // Nudge in-room media video (test-video) so its audio pipeline is permitted later.
+    try {
+      const fv = document.getElementById('fearVideo');
+      if (fv) {
+        fv.muted = false;
+        fv.volume = 1.0;
+        fv.playsInline = true;
+        const p = fv.play();
+        if (p && p.catch) p.catch(() => {});
+      }
+    } catch (e) {}
+
 
     // Enable audio for intro videos (Waiting + Walking in)
     if (waiting) {
