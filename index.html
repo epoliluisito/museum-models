@@ -4234,7 +4234,7 @@ AFRAME.registerComponent('pbr-carpet', {
   window.addEventListener('DOMContentLoaded', () => {
     const v = document.querySelector('#fearVideo');
     const a = null; // legacy (no longer used)
-    const m = document.querySelector('#fearRoomMusic');
+    const m = null; // room audio is started by the intro controller when the room is revealed
 
     async function tryStart(){
       let blocked = false;
@@ -4441,6 +4441,7 @@ AFRAME.registerComponent('pbr-carpet', {
   let managerLoaded = false;
   let began = false;
   let audioUnlocked = false;
+  let roomAudioStarted = false;
   let lastPct = 0;
 
   function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
@@ -4479,22 +4480,36 @@ AFRAME.registerComponent('pbr-carpet', {
     });
   }
 
+  function startRoomAudio(){
+    if (roomAudioStarted) return;
+    const music = document.getElementById('fearRoomMusic');
+    if (music) {
+      music.volume = 0.85;
+      try {
+        music.play().then(()=>{ roomAudioStarted = true; }).catch(()=>{});
+      } catch(e){}
+    }
+  }
+
   function unlockAudio(){
     if (audioUnlocked) return;
     audioUnlocked = true;
 
-    // Background music (recommended)
-    const music = document.getElementById('fearRoomMusic');
-    if (music) {
-      music.volume = 0.85;
-      try { music.play().catch(()=>{}); } catch(e){}
+    // Enable audio for intro videos (Waiting + Walking in)
+    if (waiting) {
+      waiting.muted = false;
+      waiting.volume = 0.95;
+      tryPlay(waiting);
+    }
+    if (walking) {
+      walking.muted = false;
+      walking.volume = 0.95;
     }
 
-    // Kick other scene videos if the browser had blocked them
-    document.querySelectorAll('a-assets video').forEach((v)=>{
-      if (!v) return;
-      try { v.play().catch(()=>{}); } catch(e){}
-    });
+    // If the intro is already gone, start room audio now
+    if (overlay && overlay.style.display === 'none') {
+      startRoomAudio();
+    }
 
     if (audioHintEl) audioHintEl.textContent = 'Audio enabled.';
   }
@@ -4514,6 +4529,9 @@ AFRAME.registerComponent('pbr-carpet', {
     }, 950);
 
     setControlsEnabled(true);
+
+    // Start room audio only once we are in the room
+    startRoomAudio();
 
     // Focus scene so WASD works immediately
     try { scene.focus(); } catch(e){}
@@ -4539,6 +4557,9 @@ AFRAME.registerComponent('pbr-carpet', {
   function startBegin(){
     if (began) return;
     began = true;
+
+    // BEGIN is a user gesture; use it to unlock intro audio if not already enabled
+    unlockAudio();
 
     overlay.classList.add('begin');
 
@@ -4612,6 +4633,13 @@ AFRAME.registerComponent('pbr-carpet', {
       quitModal.setAttribute('aria-hidden', 'true');
     }
   });
+
+
+  // Clicking anywhere on the intro also unlocks audio (useful on mobile)
+  if (overlay) {
+    overlay.addEventListener('pointerdown', () => { unlockAudio(); }, { passive: true });
+  }
+
 
   // BEGIN
   if (beginBtn) beginBtn.addEventListener('click', startBegin);
