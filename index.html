@@ -1779,10 +1779,10 @@ AFRAME.registerComponent('light-beam', {
             const shouldBeActive = !!window.__ERAORA_IN_ROOM;
             if (shouldBeActive && !this.active) {
               this.active = true;
-              this.el.setAttribute('raycaster', 'enabled: true');
+              this.el.setAttribute('raycaster', 'enabled', true);
             } else if (!shouldBeActive && this.active) {
               this.active = false;
-              this.el.setAttribute('raycaster', 'enabled: false');
+              this.el.setAttribute('raycaster', 'enabled', false);
               this.hoverEl = null;
               this._hide();
             }
