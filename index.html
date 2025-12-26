@@ -416,43 +416,7 @@ AFRAME.registerComponent('light-beam', {
       background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAAAyBAMAAADsEZWCAAAAGFBMVEUAAAA5OTkAAABMTExERERmZmYzMzMyMjJOUl6NAAAACHRSTlMAwD9/cN9/QbTD42kAAABcSURBVDjLxZFBCgAhDMNs7w/2/o+1BFmQmBQE38aSNo0t1Q/60M8+aF5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0n4bWyX0wF2wygAAAABJRU5ErkJggg==");
       opacity: 0.05;
     }
-  
-  /* ===== Center "Finger" overlay (no reticle; only appears on interactables) ===== */
-  #fingerOverlay{
-    position: fixed;
-    left: 50%;
-    top: 50%;
-    transform: translate(-50%, -50%);
-    z-index: 9999;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 120ms ease;
-    filter: drop-shadow(0 2px 6px rgba(0,0,0,0.75));
-  }
-  #fingerOverlay.show{ opacity: 1; }
-
-  /* Minimal pointer / "finger" mark (CSS-only, no asset) */
-  #fingerOverlay .fingerIcon{
-    width: 18px;
-    height: 18px;
-    border-radius: 999px;
-    background: rgba(255,255,255,0.92);
-    position: relative;
-  }
-  #fingerOverlay .fingerIcon:after{
-    content:"";
-    position:absolute;
-    left: 50%;
-    top: 50%;
-    width: 10px;
-    height: 10px;
-    border-radius: 3px;
-    transform: translate(-10%, -10%) rotate(45deg);
-    background: rgba(255,255,255,0.92);
-    opacity: 0.95;
-  }
-
-</style>
+  </style>
 
 <style>
   /* ===== UI: Elevator User Guide (2D overlay, outside the 3D scene) ===== */
@@ -697,19 +661,13 @@ AFRAME.registerComponent('light-beam', {
   <ul>
     <li><strong>Move:</strong> WASD / Arrow Keys</li>
     <li><strong>Look:</strong> Mouse</li>
-        <li><strong>Interact:</strong> When the <b>finger</b> appears at center, click to activate.</li>
+        <li><strong>Unlock mouse:</strong> Press <strong>ESC</strong> to release the cursor</li>
+<li><strong>Interact:</strong> Press <span class="keycap keycap-ask">ASK</span> to enable clicks, then click the call button</li>
     <li><strong>Elevator:</strong> Press the button to open/close doors</li>
   </ul>
   <p class="muted">Step back to dismiss this guide.</p>
 </div>
 <!-- ===== END UI OVERLAY ===== -->
-
-<!-- ===== UI OVERLAY: Center "Finger" (shows only on interactables) ===== -->
-<div id="fingerOverlay" aria-hidden="true">
-  <div class="fingerIcon" aria-hidden="true"></div>
-</div>
-<!-- ===== END UI OVERLAY ===== -->
-
 
 <!-- ===== INTRO OVERLAY (waiting loop + walking-in + panels) ===== -->
 <div id="introOverlay" aria-hidden="false">
@@ -755,7 +713,7 @@ AFRAME.registerComponent('light-beam', {
       <div class="cta"><span id="ctaText">Press <b>Enter</b> to activate audio (recommended).</span></div>
       <button id="beginBtn" class="beginBtn" type="button" disabled>BEGIN</button>
     </div>
-    <div class="sub" id="subText">Tip: look for the <b>finger</b> at center to know when you can interact.</div>
+    <div class="sub" id="subText">Tip: press <b>ESC</b> anytime to release the cursor.</div>
   </div>
 </div>
 <!-- ===== END INTRO OVERLAY ===== -->
@@ -1608,7 +1566,7 @@ AFRAME.registerComponent('light-beam', {
 <a-entity id="rig" position="9 0 -7.5" rotation="0 180 0" rig-walk="speed: 2.6; radius: 0.28" elevator-user-guide="target: #industrial_elevator_1; showDistance: 6">
 <a-entity camera="fov: 60; near: 0.05; far: 1000; zoom: 1.08" id="playerCam" initial-yaw="yaw: 0" look-controls="pointerLockEnabled: true" pitch-clamp="min: -80; max: 80" position="0 1.6 0" rotation="0 0 0">
 <a-entity id="headLamp" light="type: spot; color: #fffef0; intensity: 0.8; angle: 50; penumbra: 0.5; distance: 10; decay: 1.5; castShadow: true" position="0 0 0"></a-entity>
-<a-entity id="centerClicker" cursor="fuse: false; rayOrigin: entity" raycaster="objects: .clickable; far: 5; interval: 60" center-finger-ui></a-entity>
+<a-entity cursor="rayOrigin: mouse"></a-entity>
 </a-entity>
 </a-entity>
 <script>
@@ -4703,54 +4661,5 @@ AFRAME.registerComponent('pbr-carpet', {
   });
 })();
 </script>
-
-<!-- ===== INSERTED: Center Finger UI (shows when center ray hits .clickable within 5m) ===== -->
-<script>
-  AFRAME.registerComponent('center-finger-ui', {
-    schema: {
-      maxDistance: { type: 'number', default: 5 },
-      uiSelector: { type: 'string', default: '#fingerOverlay' }
-    },
-
-    init: function () {
-      this.ui = document.querySelector(this.data.uiSelector);
-      this._shown = false;
-      this._update = this._update.bind(this);
-
-      // Event-driven updates (plus a light tick as fallback)
-      this.el.addEventListener('raycaster-intersection', this._update);
-      this.el.addEventListener('raycaster-intersection-cleared', () => this._set(false));
-    },
-
-    tick: function () { this._update(); },
-
-    _update: function () {
-      if (!this.ui) return;
-
-      // Don't show during intro overlay (scene not yet live)
-      if (!document.body.classList.contains('scene-live')) {
-        this._set(false);
-        return;
-      }
-
-      const rc = this.el.components.raycaster;
-      if (!rc || !rc.intersections || !rc.intersections.length) {
-        this._set(false);
-        return;
-      }
-
-      const hit = rc.intersections[0];
-      this._set(hit && hit.distance <= (this.data.maxDistance + 0.01));
-    },
-
-    _set: function (on) {
-      if (on === this._shown) return;
-      this._shown = on;
-      this.ui.classList.toggle('show', !!on);
-    }
-  });
-</script>
-<!-- ===== END INSERTED: Center Finger UI ===== -->
-
 </body>
 </html>
