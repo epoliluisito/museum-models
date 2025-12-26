@@ -651,6 +651,85 @@ AFRAME.registerComponent('light-beam', {
     transition: width 220ms ease;
   }
 </style>
+
+<style id="extraUIStyles">
+  /* Center finger overlay (no reticle) */
+  #fingerOverlay{
+    position: fixed;
+    left: 50%;
+    top: 50%;
+    width: 34px;
+    height: 34px;
+    transform: translate(-50%, -50%) scale(0.92);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 12;
+    transition: opacity 120ms ease, transform 120ms ease;
+    filter: drop-shadow(0 2px 10px rgba(0,0,0,0.7));
+  }
+  #fingerOverlay.show{
+    opacity: 0.92;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  #fingerOverlay svg{ width: 100%; height: 100%; }
+
+  /* Persistent HUD */
+  #hud{
+    position: fixed;
+    left: 14px;
+    bottom: 14px;
+    z-index: 12;
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    font-size: 12px;
+    color: rgba(255,255,255,0.88);
+    letter-spacing: 0.02em;
+    user-select: none;
+    pointer-events: none;
+    text-shadow: 0 2px 10px rgba(0,0,0,0.65);
+  }
+  #hud .hudBox{
+    background: rgba(0,0,0,0.32);
+    border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 12px;
+    padding: 10px 12px;
+    backdrop-filter: blur(6px);
+  }
+  #hud .hudMore{ display:none; margin-top: 8px; opacity: 0.9; }
+  body.hud-help #hud .hudMore{ display:block; }
+
+  /* Quit confirm overlay (keyboard-only) */
+  #quitConfirm{
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 60;
+    background: rgba(0,0,0,0.65);
+    backdrop-filter: blur(6px);
+  }
+  #quitConfirm.show{ display: flex; }
+  #quitConfirm .card{
+    width: min(520px, 92vw);
+    background: rgba(10,10,10,0.92);
+    border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 14px;
+    padding: 16px 18px;
+    color: rgba(255,255,255,0.92);
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  }
+  #quitConfirm .card h3{
+    margin: 0 0 8px 0;
+    font-size: 13px;
+    letter-spacing: 0.12em;
+  }
+  #quitConfirm .card p{
+    margin: 0;
+    font-size: 12px;
+    opacity: 0.86;
+  }
+</style>
+
 </head>
 <body>
 
@@ -661,8 +740,8 @@ AFRAME.registerComponent('light-beam', {
   <ul>
     <li><strong>Move:</strong> WASD / Arrow Keys</li>
     <li><strong>Look:</strong> Mouse</li>
-        <li><strong>Unlock mouse:</strong> Press <strong>ESC</strong> to release the cursor</li>
-<li><strong>Interact:</strong> Press <span class="keycap keycap-ask">ASK</span> to enable clicks, then click the call button</li>
+    <li><strong>Interact:</strong> When the finger appears, click to press the call button</li>
+    <li><strong>Quit:</strong> Press <span class="keycap">Q</span> anytime</li>
     <li><strong>Elevator:</strong> Press the button to open/close doors</li>
   </ul>
   <p class="muted">Step back to dismiss this guide.</p>
@@ -710,13 +789,39 @@ AFRAME.registerComponent('light-beam', {
     </div>
 
     <div class="ctaRow">
-      <div class="cta"><span id="ctaText">Press <b>Enter</b> to activate audio (recommended).</span></div>
+      <div class="cta"><span id="ctaText">Press <b>Enter</b> (or click) to activate audio (recommended).</span></div>
       <button id="beginBtn" class="beginBtn" type="button" disabled>BEGIN</button>
     </div>
-    <div class="sub" id="subText">Tip: press <b>ESC</b> anytime to release the cursor.</div>
+    <div class="sub" id="subText">Tip: Press <b>H</b> for help and <b>Q</b> to quit anytime.</div>
   </div>
 </div>
 <!-- ===== END INTRO OVERLAY ===== -->
+
+<!-- ===== CENTER "FINGER" OVERLAY (appears only when aiming at a clickable within 5m) ===== -->
+<div id="fingerOverlay" aria-hidden="true">
+  <svg viewBox="0 0 64 64" fill="none" stroke="rgba(255,255,255,0.95)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M28 34V16c0-3 2-5 5-5s5 2 5 5v18"/>
+    <path d="M38 34V22c0-2 2-4 4-4s4 2 4 4v16"/>
+    <path d="M46 38V28c0-2 2-4 4-4s4 2 4 4v18c0 9-6 16-15 16H30c-6 0-11-4-13-9l-5-13c-1-3 1-6 4-7 3-1 6 1 7 4l5 11"/>
+  </svg>
+</div>
+
+<!-- ===== PERSISTENT HUD (keyboard-only) ===== -->
+<div id="hud" aria-hidden="true">
+  <div class="hudBox">
+    <div><b>WASD</b> move · <b>Mouse</b> look · <b>Click</b> when finger appears</div>
+    <div class="hudMore">Tip: <b>H</b> toggle help · <b>Q</b> quit · <b>ESC</b> cancels quit prompt</div>
+  </div>
+</div>
+
+<!-- ===== QUIT CONFIRM (keyboard-only) ===== -->
+<div id="quitConfirm" aria-hidden="true">
+  <div class="card">
+    <h3>QUIT</h3>
+    <p>Press <b>Q</b> again to quit (reload). Press <b>ESC</b> to continue.</p>
+  </div>
+</div>
+
 
 <div id="hint" style="display:none"></div>
 <div class="overlay grain"></div>
@@ -1564,7 +1669,7 @@ AFRAME.registerComponent('light-beam', {
 <a-box class="collider station2-collider" depth="0.65" height="6.20" material="color:#000000; transparent:true; opacity:0" position="8.5 3.00 10.5" width="0.65">
 </a-box>
 <a-entity id="rig" position="9 0 -7.5" rotation="0 180 0" rig-walk="speed: 2.6; radius: 0.28" elevator-user-guide="target: #industrial_elevator_1; showDistance: 6">
-<a-entity camera="fov: 60; near: 0.05; far: 1000; zoom: 1.08" id="playerCam" initial-yaw="yaw: 0" look-controls="pointerLockEnabled: true" pitch-clamp="min: -80; max: 80" position="0 1.6 0" rotation="0 0 0">
+<a-entity camera="fov: 60; near: 0.05; far: 1000; zoom: 1.08" id="playerCam" initial-yaw="yaw: 0" look-controls="pointerLockEnabled: true" pitch-clamp="min: -80; max: 80" center-interact="maxDistance: 5; selector: .clickable" position="0 1.6 0" rotation="0 0 0">
 <a-entity id="headLamp" light="type: spot; color: #fffef0; intensity: 0.8; angle: 50; penumbra: 0.5; distance: 10; decay: 1.5; castShadow: true" position="0 0 0"></a-entity>
 <a-entity cursor="rayOrigin: mouse"></a-entity>
 </a-entity>
@@ -4299,6 +4404,150 @@ AFRAME.registerComponent('pbr-carpet', {
 </script>
 <!-- ===== END INSERTED: Elevator User Guide Overlay Logic ===== -->
 
+<script>
+  // Center-ray interaction with a 2D "finger" hint (no cursor unlock, no reticle).
+  // Shows the finger only when the center-ray is hitting a .clickable entity within 5m.
+  AFRAME.registerComponent('center-interact', {
+    schema: {
+      maxDistance: { type: 'number', default: 5 },
+      selector: { type: 'string', default: '.clickable' }
+    },
+
+    init: function () {
+      this.ui = document.getElementById('fingerOverlay');
+      this.raycaster = new THREE.Raycaster();
+      this.raycaster.far = this.data.maxDistance;
+
+      this.targets = [];
+      this._hitEl = null;
+
+      this._tmpPos = new THREE.Vector3();
+      this._tmpDir = new THREE.Vector3();
+      this._tmpQuat = new THREE.Quaternion();
+
+      this._rebuildTargets = this._rebuildTargets.bind(this);
+      this._onMouseDown = this._onMouseDown.bind(this);
+
+      // Rebuild targets after scene loads + a couple delayed passes (models can arrive late).
+      const sceneEl = this.el.sceneEl;
+      if (sceneEl) {
+        if (sceneEl.hasLoaded) this._rebuildTargets();
+        else sceneEl.addEventListener('loaded', this._rebuildTargets, { once: true });
+
+        setTimeout(this._rebuildTargets, 1500);
+        setTimeout(this._rebuildTargets, 4000);
+        setTimeout(this._rebuildTargets, 9000);
+      }
+
+      window.addEventListener('mousedown', this._onMouseDown, true);
+    },
+
+    remove: function () {
+      window.removeEventListener('mousedown', this._onMouseDown, true);
+    },
+
+    _rebuildTargets: function () {
+      const sceneEl = this.el.sceneEl;
+      if (!sceneEl) return;
+
+      const els = Array.from(sceneEl.querySelectorAll(this.data.selector));
+      this.targets = els
+        .filter(el => el && el.object3D)
+        .map(el => el.object3D);
+    },
+
+    _setUI: function (show) {
+      if (!this.ui) return;
+      this.ui.classList.toggle('show', !!show);
+    },
+
+    _onMouseDown: function (e) {
+      // Only intercept primary clicks when the experience is live.
+      if (e.button !== 0) return;
+      if (!document.body.classList.contains('scene-live')) return;
+      if (!this._hitEl) return;
+
+      e.preventDefault();
+
+      // Emit A-Frame click + dispatch DOM click (so inline onclick="..." works).
+      try { this._hitEl.emit('click'); } catch (err) {}
+      try {
+        const evt = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
+        this._hitEl.dispatchEvent(evt);
+      } catch (err) {}
+    },
+
+    tick: function () {
+      if (!document.body.classList.contains('scene-live')) {
+        this._hitEl = null;
+        this._setUI(false);
+        return;
+      }
+
+      // Ray from camera forward.
+      const camObj = this.el.object3D;
+      camObj.getWorldPosition(this._tmpPos);
+      camObj.getWorldQuaternion(this._tmpQuat);
+      this._tmpDir.set(0, 0, -1).applyQuaternion(this._tmpQuat).normalize();
+
+      this.raycaster.set(this._tmpPos, this._tmpDir);
+      const hits = this.raycaster.intersectObjects(this.targets, true);
+
+      let hitEl = null;
+      if (hits && hits.length) {
+        let el = hits[0].object && hits[0].object.el;
+        while (el && el !== this.el.sceneEl && !(el.matches && el.matches(this.data.selector))) {
+          el = el.parentEl;
+        }
+        if (el && el.matches && el.matches(this.data.selector)) hitEl = el;
+      }
+
+      this._hitEl = hitEl;
+      this._setUI(!!hitEl);
+    }
+  });
+
+  // Global help/quit hotkeys (work everywhere).
+  (function(){
+    const quit = document.getElementById('quitConfirm');
+    let quitArmed = false;
+
+    function showQuit(show){
+      if (!quit) return;
+      quit.classList.toggle('show', !!show);
+      quitArmed = !!show;
+    }
+
+    window.addEventListener('keydown', (e) => {
+      if (e.repeat) return;
+
+      if (e.code === 'KeyH') {
+        document.body.classList.toggle('hud-help');
+      }
+
+      if (e.code === 'Escape') {
+        if (quitArmed) showQuit(false);
+      }
+
+      if (e.code === 'KeyQ') {
+        if (!quitArmed) {
+          showQuit(true);
+        } else {
+          try {
+            document.querySelectorAll('video, audio').forEach(m => { try { m.pause(); } catch(e){} });
+          } catch(e){}
+          location.reload();
+        }
+      }
+    }, { passive: true });
+
+    if (quit){
+      quit.addEventListener('pointerdown', () => showQuit(false), { passive: true });
+    }
+  })();
+</script>
+
+
 
 
 <script>
@@ -4315,8 +4564,8 @@ AFRAME.registerComponent('pbr-carpet', {
   const sceneWrap = document.getElementById('sceneWrap');
   const scene = document.querySelector('a-scene');
   const assets = document.querySelector('a-assets');
-  const fearVideo = document.getElementById('fearVideo');
-  const fearMusic = document.getElementById('fearRoomMusic');
+  const fearVideo = document.getElementById('fearVideo');         // in-room documentary
+  const fearMusic = document.getElementById('fearRoomMusic');     // ambient/traffic bed
 
   const loadStatus = document.getElementById('loadStatus');
   const loadBarFill = document.getElementById('loadBarFill');
@@ -4368,10 +4617,54 @@ AFRAME.registerComponent('pbr-carpet', {
 
   function setSourcesFromData(el){
     if (!el) return;
-    const dataSrc = el.getAttribute('data-src');
-    if (dataSrc && !el.getAttribute('src')) el.setAttribute('src', dataSrc);
     const sources = el.querySelectorAll('source[data-src]');
     sources.forEach(s => { if (!s.getAttribute('src')) s.setAttribute('src', s.getAttribute('data-src')); });
+  }
+
+  function hasConcreteSrc(mediaEl){
+    if (!mediaEl) return false;
+    // For <video>/<audio> in <a-assets>, the URL is on <source>.
+    const sources = mediaEl.querySelectorAll('source');
+    for (const s of sources){
+      const src = s.getAttribute('src');
+      if (src && src.trim()) return true;
+    }
+    return !!(mediaEl.getAttribute('src') && mediaEl.getAttribute('src').trim());
+  }
+
+  // ---------- Performance defaults ----------
+  function applyPerformanceDefaults(){
+    if (!scene) return;
+
+    const isChrome = /Chrome/.test(navigator.userAgent) && !/Edg/.test(navigator.userAgent) && !/OPR/.test(navigator.userAgent);
+
+    const apply = () => {
+      if (!scene.renderer) return;
+
+      // Cap pixel ratio (major win on Chrome + dPR>1 screens).
+      try {
+        const cap = isChrome ? 1.25 : 1.5;
+        const pr = Math.min(window.devicePixelRatio || 1, cap);
+        scene.renderer.setPixelRatio(pr);
+      } catch(e){}
+
+      // Shadows: static scene → avoid per-frame shadow updates.
+      try {
+        if (scene.renderer.shadowMap) {
+          scene.renderer.shadowMap.autoUpdate = false;
+          scene.renderer.shadowMap.needsUpdate = true; // one update
+        }
+      } catch(e){}
+    };
+
+    // A-Frame emits renderstart when the renderer/canvas is ready.
+    if (scene.renderer) apply();
+    else scene.addEventListener('renderstart', apply, { once: true });
+
+    // Also reduce "highRefreshRate" on Chrome.
+    try {
+      if (isChrome) scene.setAttribute('renderer', 'highRefreshRate: false');
+    } catch(e){}
   }
 
   // ---------- Loading progress ----------
@@ -4382,13 +4675,15 @@ AFRAME.registerComponent('pbr-carpet', {
     started: false
   };
 
+  const deferredMedia = []; // video/audio with data-src only (start after ENTER)
+
   function updateLoadUI(){
     const pct = loader.total ? Math.round((loader.done / loader.total) * 100) : 0;
     if (loadBarFill) loadBarFill.style.width = pct + '%';
 
     if (!loadStatus) return;
     if (!audioUnlocked){
-      loadStatus.textContent = `Loading… ${pct}% (textures loading; audio/media will load after ENTER)`;
+      loadStatus.textContent = `Loading… ${pct}% (room loading; audio/media start after ENTER)`;
     } else if (!loader.sceneDone){
       loadStatus.textContent = `Loading… ${pct}% (preparing room)`;
     } else {
@@ -4401,45 +4696,60 @@ AFRAME.registerComponent('pbr-carpet', {
     updateLoadUI();
   }
 
+  function trackEl(el){
+    if (!el) return;
+    const tag = (el.tagName || '').toLowerCase();
+
+    loader.total++;
+
+    const done = () => {
+      el.removeEventListener('load', done);
+      el.removeEventListener('loaded', done);
+      el.removeEventListener('loadeddata', done);
+      el.removeEventListener('loadedmetadata', done);
+      el.removeEventListener('canplay', done);
+      el.removeEventListener('canplaythrough', done);
+      el.removeEventListener('error', done);
+      markDoneOnce();
+    };
+
+    // Watchdog: never stall the UI forever on one asset.
+    const watchdog = setTimeout(() => done(), 25000);
+
+    const doneOnce = () => { clearTimeout(watchdog); done(); };
+
+    // Immediate checks (if already cached/ready)
+    try {
+      if (tag === 'img' && el.complete && (el.naturalWidth || el.width)) { doneOnce(); return; }
+      if ((tag === 'video' || tag === 'audio') && el.readyState >= 2) { doneOnce(); return; }
+      if (tag === 'a-asset-item' && el.hasLoaded) { doneOnce(); return; }
+    } catch(e){}
+
+    el.addEventListener('load', doneOnce, { once: true });
+    el.addEventListener('loaded', doneOnce, { once: true });              // a-asset-item
+    el.addEventListener('loadeddata', doneOnce, { once: true });
+    el.addEventListener('loadedmetadata', doneOnce, { once: true });
+    el.addEventListener('canplay', doneOnce, { once: true });
+    el.addEventListener('canplaythrough', doneOnce, { once: true });
+    el.addEventListener('error', doneOnce, { once: true });
+  }
+
   function startLoadTracker(){
     if (loader.started) return;
     loader.started = true;
 
-    const trackEl = (el) => {
-      if (!el) return;
-      const tag = (el.tagName || '').toLowerCase();
-      loader.total++;
-
-      // Immediate check
-      const isComplete = () => {
-        if (tag === 'img') return el.complete && (el.naturalWidth || el.width);
-        if (tag === 'video' || tag === 'audio') return (el.readyState >= 2);
-        if (tag === 'a-asset-item') return !!(el.getObject3D && el.getObject3D('mesh')); // not reliable
-        return false;
-      };
-
-      if (isComplete()){
-        markDoneOnce();
-        return;
-      }
-
-      const done = () => {
-        el.removeEventListener('load', done);
-        el.removeEventListener('loadeddata', done);
-        el.removeEventListener('canplaythrough', done);
-        el.removeEventListener('error', done);
-        markDoneOnce();
-      };
-
-      el.addEventListener('load', done, { once: true });
-      el.addEventListener('loadeddata', done, { once: true });
-      el.addEventListener('canplaythrough', done, { once: true });
-      el.addEventListener('error', done, { once: true });
-    };
-
-    // Track existing a-assets children (images, videos, audio, asset-items)
     if (assets){
-      Array.from(assets.children).forEach(trackEl);
+      Array.from(assets.children).forEach((el) => {
+        const tag = (el.tagName || '').toLowerCase();
+
+        // Defer <video>/<audio> that only have data-src (they won't start until ENTER).
+        if ((tag === 'video' || tag === 'audio') && !hasConcreteSrc(el)) {
+          deferredMedia.push(el);
+          return;
+        }
+
+        trackEl(el);
+      });
     }
 
     // Track the a-scene itself as one item (render pipeline ready)
@@ -4454,11 +4764,17 @@ AFRAME.registerComponent('pbr-carpet', {
 
     updateLoadUI();
 
-    // Safety: tick updates in case some elements were already complete but missed.
+    // Safety refresh
     const interval = setInterval(() => {
-      if (loader.done >= loader.total) { clearInterval(interval); return; }
       updateLoadUI();
+      if (loader.done >= loader.total) clearInterval(interval);
     }, 250);
+  }
+
+  function trackDeferredMediaNow(){
+    // Only add deferred media once (after audio unlock).
+    deferredMedia.splice(0).forEach((m) => trackEl(m));
+    updateLoadUI();
   }
 
   // ---------- Scene readiness gate ----------
@@ -4507,6 +4823,9 @@ AFRAME.registerComponent('pbr-carpet', {
 
     try { if (fearVideo) fearVideo.load(); } catch(e){}
     try { if (fearMusic) fearMusic.load(); } catch(e){}
+
+    // Now that media actually has real URLs, include it in the loader.
+    trackDeferredMediaNow();
   }
 
   async function unlockAudio(){
@@ -4514,11 +4833,13 @@ AFRAME.registerComponent('pbr-carpet', {
     audioUnlocked = true;
 
     if (ctaText) ctaText.innerHTML = 'Audio enabled. Press <b>BEGIN</b> to start.';
-    if (subText) subText.textContent = 'You can also press Enter to begin.';
+    if (subText) subText.innerHTML = 'Tip: Press <b>H</b> for help and <b>Q</b> to quit anytime.';
     if (beginBtn) beginBtn.disabled = false;
 
     // Unmute the waiting loop (must happen inside a user gesture).
+    // On Chrome, unmuting mid-play can stay silent; pause → unmute → play is more reliable.
     if (vWait){
+      try { vWait.pause(); } catch(e){}
       try { vWait.muted = false; } catch(e){}
       try { vWait.volume = 0; } catch(e){}
       await safePlay(vWait);
@@ -4540,6 +4861,7 @@ AFRAME.registerComponent('pbr-carpet', {
 
     // Prepare and start the walking-in video, crossfade visually + audibly.
     if (vWalk){
+      try { vWalk.pause(); } catch(e){}
       try { vWalk.muted = false; } catch(e){}
       vWalk.currentTime = 0;
       vWalk.loop = false;
@@ -4587,12 +4909,12 @@ AFRAME.registerComponent('pbr-carpet', {
     if (overlay) overlay.classList.add('to-scene');
 
     // Start in-scene media as we enter (audio is already unlocked).
+    // IMPORTANT: fearVideo must have audio in-room.
     try {
       if (fearVideo){
         setSourcesFromData(fearVideo);
-        // visual only; keep silent
-        fearVideo.muted = true;
-        fearVideo.volume = 0.0;
+        fearVideo.muted = false;
+        fearVideo.volume = 1.0;
         await safePlay(fearVideo);
       }
     } catch(e){}
@@ -4654,6 +4976,7 @@ AFRAME.registerComponent('pbr-carpet', {
   }
 
   window.addEventListener('DOMContentLoaded', async () => {
+    applyPerformanceDefaults();
     primeAframeMedia();
     startLoadTracker();
     attachHandlers();
