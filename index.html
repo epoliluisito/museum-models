@@ -2064,10 +2064,10 @@ AFRAME.registerComponent('screen-always-on', {
             // Positional audio (separate element, synced to video time).
             this.el.setAttribute('positional-media-audio', {
               el: (this.data.audio || this.data.video),
-              volume: 0.68,
-              refDistance: 1.4,
+              volume: 0.95,
+              refDistance: 0.9,
               maxDistance: 22.0,
-              rolloffFactor: 1.4
+              rolloffFactor: 2.2
             });
 
             this._setSpill(true);
