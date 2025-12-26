@@ -510,6 +510,12 @@ AFRAME.registerComponent('light-beam', {
   #introOverlay.begin .introVideo.waiting{ opacity:0; }
   #introOverlay.begin .introVideo.walking{ opacity:1; }
 
+  #introOverlay.begin .panel{
+    opacity:0;
+    transform: translateY(6px);
+    pointer-events:none;
+  }
+
   #introOverlay .introVignette{
     position:absolute; inset:0;
     background:
@@ -531,6 +537,7 @@ AFRAME.registerComponent('light-beam', {
     line-height: 1.45;
     box-shadow: 0 18px 60px rgba(0,0,0,0.55);
     backdrop-filter: blur(6px);
+    transition: opacity 700ms ease, transform 700ms ease;
   }
   #introOverlay .panel::-webkit-scrollbar{ width: 10px; }
   #introOverlay .panel::-webkit-scrollbar-thumb{ background: rgba(255,255,255,0.10); border-radius: 10px; }
@@ -4572,8 +4579,27 @@ AFRAME.registerComponent('pbr-carpet', {
 
     walking.addEventListener('ended', afterWalkingVideo, { once: true });
 
-    // Failsafe: if ended doesn't fire (mobile quirks), reveal after a max duration.
-    setTimeout(() => { if (overlay.style.display !== 'none') afterWalkingVideo(); }, 22000);
+    // Failsafe: if 'ended' doesn't fire (mobile quirks), fall back to duration-based timeout.
+    const scheduleFailsafe = () => {
+      let ms = 60000; // conservative default
+      const dur = (walking && isFinite(walking.duration)) ? walking.duration : 0;
+      if (dur > 1) ms = (dur * 1000) + 2000;
+      setTimeout(() => {
+        if (!overlay || overlay.style.display === 'none') return;
+        if (walking && walking.ended) return;
+        afterWalkingVideo();
+      }, ms);
+    };
+
+    if (walking && walking.readyState >= 1) {
+      scheduleFailsafe();
+    } else if (walking) {
+      walking.addEventListener('loadedmetadata', scheduleFailsafe, { once: true });
+      // Secondary backstop if metadata never arrives
+      setTimeout(() => {
+        if (walking && walking.readyState < 1) scheduleFailsafe();
+      }, 4000);
+    }
   }
 
   // ---- Hook loading progress -------------------------------------------------
