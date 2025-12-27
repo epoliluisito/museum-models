@@ -841,7 +841,7 @@ AFRAME.registerComponent('light-beam', {
 <div class="overlay grain"></div>
 <a-scene tabindex="0" background="color: #020202" fog="type: exponential; color: #050505; density: 0.00022" renderer="antialias: true; colorManagement: true; physicallyCorrectLights: true; exposure: 0.92; highRefreshRate: true;" s4-mercury-manager="" shadow="type: pcfsoft; autoUpdate: true;" vr-mode-ui="enabled: false">
 <a-assets>
-<video autoplay crossorigin="anonymous" id="fearVideo" loop playsinline webkit-playsinline preload="auto">
+<video crossorigin="anonymous" id="fearVideo" loop playsinline webkit-playsinline preload="auto" muted>
 <source src="fear-room/video/test-video.mp4" type="video/mp4"/>
 </video>
 <audio crossorigin="anonymous" id="fearRoomMusic" loop preload="auto">
@@ -1681,7 +1681,7 @@ AFRAME.registerComponent('light-beam', {
 </a-box>
 <a-box class="collider station2-collider" depth="0.65" height="6.20" material="color:#000000; transparent:true; opacity:0" position="8.5 3.00 10.5" width="0.65">
 </a-box>
-<a-entity id="rig" position="9 0 -7.5" rotation="0 180 0" rig-walk="speed: 2.6; radius: 0.28" elevator-user-guide="target: #industrial_elevator_1; showDistance: 6">
+<a-entity id="rig" position="9 0 -7.5" rotation="0 180 0" rig-walk="speed: 2.6; radius: 0.28" elevator-user-guide="target: #industrial_elevator_1; showDistance: 5">
 <a-entity camera="fov: 60; near: 0.05; far: 1000; zoom: 1.08" id="playerCam" initial-yaw="yaw: 0" look-controls="pointerLockEnabled: true" pitch-clamp="min: -80; max: 80" position="0 1.6 0" rotation="0 0 0">
 <a-entity id="headLamp" light="type: spot; color: #fffef0; intensity: 0.8; angle: 50; penumbra: 0.5; distance: 10; decay: 1.5; castShadow: true" position="0 0 0"></a-entity>
 <a-entity cursor="rayOrigin: mouse"></a-entity>
@@ -2106,18 +2106,49 @@ AFRAME.registerComponent('screen-always-on', {
 
           init: function () {
             this._videoEl = this.data.video || null;
+            this._baseVolume = 0.75;
+
+            const active = !!window.__fearRoomActive;
+            const audioOn = !!window.__fearAudioEnabled;
 
             // Positional audio (separate element, synced to video time).
             this.el.setAttribute('positional-media-audio', {
               el: (this.data.audio || this.data.video),
-              volume: 0.75,
+              volume: (active && audioOn) ? this._baseVolume : 0.0,
               refDistance: 1.4,
               maxDistance: 22.0,
               rolloffFactor: 1.4
             });
 
+            const applyAudio = (on) => {
+              const vol = on ? this._baseVolume : 0.0;
+              this.el.setAttribute('positional-media-audio', 'volume', vol);
+              try {
+                if (this._videoEl) {
+                  this._videoEl.muted = !on;
+                  this._videoEl.volume = on ? 1.0 : 0.0;
+                }
+              } catch (e) {}
+            };
+
+            // Keep spill light on (visual) but prevent media from starting until the room is active.
             this._setSpill(true);
-            this._startVideo();
+
+            if (active) {
+              this._startVideo();
+              applyAudio(audioOn);
+            } else {
+              // Start only after intro transitions into the room.
+              const activate = () => {
+                this._startVideo();
+                applyAudio(!!window.__fearAudioEnabled);
+              };
+              window.addEventListener('fearroom-activate', activate, { once: true });
+            }
+
+            // Respond to user audio enable/disable.
+            window.addEventListener('fearroom-audio-on', () => applyAudio(true));
+            window.addEventListener('fearroom-audio-off', () => applyAudio(false));
           },
 
           tick: function () {
@@ -4291,48 +4322,26 @@ AFRAME.registerComponent('pbr-carpet', {
 
   // Try to start media as soon as possible (may be blocked by autoplay policies).
   window.addEventListener('DOMContentLoaded', () => {
+    // Ensure room media is silent during the waiting/intro overlays.
     const v = document.querySelector('#fearVideo');
-    const a = null; // legacy (no longer used)
     const m = document.querySelector('#fearRoomMusic');
 
-    async function tryStart(){
-      let blocked = false;
+    try { if (v) { v.muted = true; v.volume = 0.0; v.pause(); } } catch (e) {}
+    try { if (m) { m.muted = true; m.volume = 0.0; m.pause(); } } catch (e) {}
 
-      if (v){
-        v.muted = true;
-        v.volume = 0.0;
-        try { await v.play(); } catch(e){ blocked = true; }
-      }
-      if (m){
-        m.muted = false;
-        m.volume = 0.12;
-        try { await m.play(); } catch(e){ blocked = true; }
-      }
+    // One-time user-gesture unlock for WebAudio (positional video sound uses THREE.AudioContext).
+    const unlock = async () => {
+      try {
+        if (window.THREE && THREE.AudioContext && THREE.AudioContext.getContext) {
+          const c = THREE.AudioContext.getContext();
+          if (c && c.state === 'suspended') await c.resume();
+        }
+      } catch (e) {}
+      window.__fearAudioUnlocked = true;
+    };
 
-      if (blocked){
-        showHint('<b>Audio blocked by browser (click to enable)</b> • click once anywhere to enable sound');
-        const unlock = async () => {
-          // Resume WebAudio (needed for positional video sound).
-          try { if (window.THREE && THREE.AudioContext && THREE.AudioContext.getContext) { const c = THREE.AudioContext.getContext(); if (c && c.state === 'suspended') await c.resume(); } } catch(e){}
-          try {
-            if (v){ v.muted = false; v.volume = 1.0; await v.play().catch(()=>{}); }
-          } catch(e){}
-          try {
-            if (a){ a.muted = false; await a.play(); }
-          } catch(e){}
-          try {
-            if (m){ m.muted = false; m.volume = 0.12; await m.play(); }
-          } catch(e){}
-          hideHint();
-        };
-        window.addEventListener('pointerdown', unlock, { once: true });
-        window.addEventListener('keydown', unlock, { once: true });
-      } else {
-        hideHint();
-      }
-    }
-
-    tryStart();
+    window.addEventListener('pointerdown', unlock, { once: true, capture: true });
+    window.addEventListener('keydown', unlock, { once: true, capture: true });
   });
 })();
 </script>
@@ -4445,7 +4454,7 @@ AFRAME.registerComponent('pbr-carpet', {
   AFRAME.registerComponent('elevator-user-guide', {
     schema: {
       target: { type: 'selector' },
-      showDistance: { type: 'number', default: 4 }
+      showDistance: { type: 'number', default: 5 }
     },
 
     init: function () {
@@ -4503,7 +4512,7 @@ AFRAME.registerComponent('pbr-carpet', {
 <!-- ===== INSERTED: Elevator Key Activation + Open Message ===== -->
 <script>
 (function () {
-  const USE_DISTANCE = 4.0; // meters from the call panel
+  const USE_DISTANCE = 5.0; // meters from the call panel
 
   const hint = document.getElementById('hint');
   function canUseHint() {
@@ -4630,12 +4639,17 @@ AFRAME.registerComponent('pbr-carpet', {
 
   function tryStartRoomAudio() {
     if (!audioEnabled || !ROOM_MUSIC) return;
+    ROOM_MUSIC.volume = 0.12;
     ROOM_MUSIC.muted = false;
     safePlay(ROOM_MUSIC).catch(() => {});
   }
 
   function setAudioEnabled(on) {
     audioEnabled = !!on;
+    window.__fearAudioEnabled = audioEnabled;
+    if (window.__fearRoomActive) {
+      try { window.dispatchEvent(new Event(audioEnabled ? 'fearroom-audio-on' : 'fearroom-audio-off')); } catch (e) {}
+    }
     const muted = !audioEnabled;
 
     if (WAITING) WAITING.muted = muted;
@@ -4749,7 +4763,16 @@ AFRAME.registerComponent('pbr-carpet', {
       try { if (WAITING) WAITING.currentTime = 0; } catch(e){}
       try { if (WALKING) WALKING.currentTime = 0; } catch(e){}
 
+      window.__fearRoomActive = true;
+
+
+      try { window.dispatchEvent(new Event('fearroom-activate')); } catch (e) {}
+
+
+
       resumePlayerMovement();
+
+
       tryStartRoomAudio();
     }, 1400);
   }
