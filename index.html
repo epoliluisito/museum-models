@@ -393,6 +393,51 @@ AFRAME.registerComponent('light-beam', {
       }
     });
 
+    // Desktop "grab" (no external deps). Add class="grabbable" to objects you want to pick up.
+    // Grab: mousedown. Drop: mouseup. While grabbed, object is held in front of the camera.
+    AFRAME.registerComponent('desktop-grabbable', {
+      schema: { holdDistance: { type: 'number', default: 0.6 } },
+      init: function () {
+        this.cam = document.getElementById('playerCam') || document.querySelector('[camera]');
+        this._worldPos = new THREE.Vector3();
+        this._worldQuat = new THREE.Quaternion();
+        this._worldScale = new THREE.Vector3();
+        this._grabbed = false;
+        this._origParent = null;
+
+        this.el.addEventListener('mousedown', () => this.grab());
+        this.el.addEventListener('mouseup',   () => this.drop());
+      },
+      grab: function () {
+        if (this._grabbed || !this.cam) return;
+        this._grabbed = true;
+
+        // Save original parent so we can restore later.
+        this._origParent = this.el.object3D.parent;
+
+        // Hold in front of camera (local space), so it's stable in pointer-lock.
+        this.cam.object3D.add(this.el.object3D);
+        this.el.object3D.position.set(0, -0.10, -this.data.holdDistance);
+        this.el.object3D.rotation.set(0, 0, 0);
+      },
+      drop: function () {
+        if (!this._grabbed) return;
+        this._grabbed = false;
+
+        // Convert current world transform, then reattach to original parent (or scene).
+        this.el.object3D.updateMatrixWorld(true);
+        this.el.object3D.getWorldPosition(this._worldPos);
+        this.el.object3D.getWorldQuaternion(this._worldQuat);
+        this.el.object3D.getWorldScale(this._worldScale);
+
+        const parent = this._origParent || this.el.sceneEl.object3D;
+        parent.add(this.el.object3D);
+        this.el.object3D.position.copy(this._worldPos);
+        this.el.object3D.quaternion.copy(this._worldQuat);
+        this.el.object3D.scale.copy(this._worldScale);
+      }
+    });
+
   })();
   </script>
 <style>
@@ -748,531 +793,6 @@ AFRAME.registerComponent('light-beam', {
   }
 </style>
 
-
-<!-- =======================================================================
-     NPC Crowd System (characters walking + pausing with collider avoidance)
-     - Does NOT touch the player rig/controls/spawn.
-     - NPCs avoid ALL entities with class="collider" via world AABB checks.
-     - Waypoint strings use "|" delimiters to avoid A-Frame ";" parsing pitfalls.
-======================================================================= -->
-<script>
-(function () {
-  // ---- Global knobs (so you can tell me later: "apply this grade to all NPCs") ----
-  // These values act as *multipliers* on each mesh material (best-effort, texture-safe).
-  // Tweak anytime (or override per NPC via character-npc component props).
-  window.NPC_MAT_GRADE = window.NPC_MAT_GRADE || {
-    brightness: 0.88,      // < 1 darker, > 1 brighter
-    contrast: 1.06,        // 1 unchanged
-    saturation: 0.85,      // < 1 less saturated, > 1 more saturated
-    roughnessMin: 0.78,    // push roughness up to reduce "plasticy" sheen
-    metalnessMax: 0.05,    // clamp metalness down
-    envMapIntensityMax: 0.25,
-    emissiveIntensityMax: 0.15
-  };
-
-  const TMP_V3 = new THREE.Vector3();
-  const TMP_V3B = new THREE.Vector3();
-  const TMP_BOX = new THREE.Box3();
-  const TMP_COLOR = new THREE.Color();
-  const EPS = 1e-6;
-
-  function clamp (v, a, b) { return Math.max(a, Math.min(b, v)); }
-
-  function applyGradeToMaterial (mat, grade) {
-    if (!mat) return;
-    // reduce specular "plastic" look
-    if (typeof mat.roughness === 'number') mat.roughness = Math.max(mat.roughness, grade.roughnessMin);
-    if (typeof mat.metalness === 'number') mat.metalness = Math.min(mat.metalness, grade.metalnessMax);
-    if (typeof mat.envMapIntensity === 'number') mat.envMapIntensity = Math.min(mat.envMapIntensity, grade.envMapIntensityMax);
-    if (typeof mat.emissiveIntensity === 'number') mat.emissiveIntensity = Math.min(mat.emissiveIntensity, grade.emissiveIntensityMax);
-
-    if (mat.color && mat.color.isColor) {
-      // brightness (multiply)
-      mat.color.multiplyScalar(grade.brightness);
-
-      // saturation (approx via HSL)
-      let hsl = {};
-      mat.color.getHSL(hsl);
-      hsl.s = clamp(hsl.s * grade.saturation, 0, 1);
-      mat.color.setHSL(hsl.h, hsl.s, hsl.l);
-
-      // contrast (approx around mid-gray)
-      // (note: this is an approximation that works reasonably for albedo multipliers)
-      TMP_COLOR.copy(mat.color);
-      TMP_COLOR.r = (TMP_COLOR.r - 0.5) * grade.contrast + 0.5;
-      TMP_COLOR.g = (TMP_COLOR.g - 0.5) * grade.contrast + 0.5;
-      TMP_COLOR.b = (TMP_COLOR.b - 0.5) * grade.contrast + 0.5;
-      mat.color.copy(TMP_COLOR);
-    }
-
-    mat.needsUpdate = true;
-  }
-
-  function applyGradeToModel (root, grade) {
-    if (!root) return;
-    root.traverse(function (o) {
-      if (!o.isMesh) return;
-      // leave shadows off by default (these are "visitors")
-      o.castShadow = false;
-      o.receiveShadow = false;
-
-      const mats = Array.isArray(o.material) ? o.material : [o.material];
-      for (let i = 0; i < mats.length; i++) applyGradeToMaterial(mats[i], grade);
-    });
-  }
-
-  function makeMixer (model) {
-    const clips = (model && model.animations) ? model.animations : [];
-    if (!clips || !clips.length) return null;
-    const mixer = new THREE.AnimationMixer(model);
-    const action = mixer.clipAction(clips[0]);
-    action.reset();
-    action.play();
-    return mixer;
-  }
-
-  // =========================
-  // Component: character-npc
-  // =========================
-  AFRAME.registerComponent('character-npc', {
-    schema: {
-      idleSrc: { type: 'string', default: '' },
-      walkSrc: { type: 'string', default: '' },
-
-      // transform helpers
-      scale: { type: 'vec3', default: { x: 1, y: 1, z: 1 } },
-      yOffset: { type: 'number', default: 0 },
-
-      // optional per-NPC overrides (set to -1 to use window.NPC_MAT_GRADE values)
-      brightness: { type: 'number', default: -1 },
-      contrast: { type: 'number', default: -1 },
-      saturation: { type: 'number', default: -1 }
-    },
-
-    init: function () {
-      this._isMoving = false;
-
-      this._idleEl = document.createElement('a-entity');
-      this._walkEl = document.createElement('a-entity');
-
-      this._idleMixer = null;
-      this._walkMixer = null;
-
-      this._idleLoaded = false;
-      this._walkLoaded = false;
-
-      // wrapper so we can apply yOffset/scale once
-      this._wrapper = document.createElement('a-entity');
-      this._wrapper.setAttribute('position', `0 ${this.data.yOffset} 0`);
-      this._wrapper.setAttribute('scale', `${this.data.scale.x} ${this.data.scale.y} ${this.data.scale.z}`);
-      this.el.appendChild(this._wrapper);
-
-      this._wrapper.appendChild(this._idleEl);
-      this._wrapper.appendChild(this._walkEl);
-
-      // visibility defaults
-      this._idleEl.setAttribute('visible', true);
-      this._walkEl.setAttribute('visible', false);
-
-      this._idleEl.addEventListener('model-error', (e) => {
-        console.warn('[character-npc] IDLE model-error', this.data.idleSrc, e && e.detail ? e.detail : e);
-      });
-      this._walkEl.addEventListener('model-error', (e) => {
-        console.warn('[character-npc] WALK model-error', this.data.walkSrc, e && e.detail ? e.detail : e);
-      });
-
-      this._idleEl.addEventListener('model-loaded', (e) => {
-        const model = e.detail && e.detail.model ? e.detail.model : this._idleEl.getObject3D('mesh');
-        this._idleMixer = makeMixer(model);
-        applyGradeToModel(model, this._getGrade());
-        this._idleLoaded = true;
-      });
-
-      this._walkEl.addEventListener('model-loaded', (e) => {
-        const model = e.detail && e.detail.model ? e.detail.model : this._walkEl.getObject3D('mesh');
-        this._walkMixer = makeMixer(model);
-        applyGradeToModel(model, this._getGrade());
-        this._walkLoaded = true;
-      });
-
-      // kick loading
-      if (this.data.idleSrc) this._idleEl.setAttribute('gltf-model', this.data.idleSrc);
-      if (this.data.walkSrc) this._walkEl.setAttribute('gltf-model', this.data.walkSrc);
-    },
-
-    update: function () {
-      // keep wrapper transform in sync
-      if (this._wrapper) {
-        this._wrapper.setAttribute('position', `0 ${this.data.yOffset} 0`);
-        this._wrapper.setAttribute('scale', `${this.data.scale.x} ${this.data.scale.y} ${this.data.scale.z}`);
-      }
-    },
-
-    _getGrade: function () {
-      const g = window.NPC_MAT_GRADE || {};
-      return {
-        brightness: (this.data.brightness > 0 ? this.data.brightness : g.brightness) || 1,
-        contrast: (this.data.contrast > 0 ? this.data.contrast : g.contrast) || 1,
-        saturation: (this.data.saturation > 0 ? this.data.saturation : g.saturation) || 1,
-        roughnessMin: (g.roughnessMin != null ? g.roughnessMin : 0.8),
-        metalnessMax: (g.metalnessMax != null ? g.metalnessMax : 0.05),
-        envMapIntensityMax: (g.envMapIntensityMax != null ? g.envMapIntensityMax : 0.25),
-        emissiveIntensityMax: (g.emissiveIntensityMax != null ? g.emissiveIntensityMax : 0.15)
-      };
-    },
-
-    setMoving: function (moving) {
-      this._isMoving = !!moving;
-
-      // If models are not loaded yet, just set visibility intentions.
-      if (this._isMoving) {
-        this._idleEl.setAttribute('visible', false);
-        this._walkEl.setAttribute('visible', true);
-      } else {
-        this._idleEl.setAttribute('visible', true);
-        this._walkEl.setAttribute('visible', false);
-      }
-    },
-
-    isMoving: function () { return this._isMoving; },
-
-    tick: function (t, dt) {
-      const dts = dt / 1000;
-      if (!dts || dts <= 0) return;
-
-      if (this._isMoving) {
-        if (this._walkMixer) this._walkMixer.update(dts);
-      } else {
-        if (this._idleMixer) this._idleMixer.update(dts);
-      }
-    }
-  });
-
-  // ======================
-  // Component: npc-patrol
-  // ======================
-  AFRAME.registerComponent('npc-patrol', {
-    schema: {
-      waypoints: { type: 'string', default: '' },   // "x y z pauseSeconds [look:#selector]" separated by "|"
-      speed: { type: 'number', default: 0.9 },      // meters/second
-      turnSpeed: { type: 'number', default: 160 },  // degrees/second (yaw)
-      arrivalRadius: { type: 'number', default: 0.4 },
-
-      // collision
-      radius: { type: 'number', default: 0.25 },
-      slideStep: { type: 'number', default: 0.06 },
-      slideTries: { type: 'int', default: 6 },
-
-      // behavior
-      idleOnBlockedSeconds: { type: 'number', default: 0.45 } // how long to pause when fully blocked
-    },
-
-    init: function () {
-      this._wps = [];
-      this._wpIndex = 0;
-
-      this._pauseLeft = 0;
-      this._pauseLookSel = '';
-      this._blockedCooldown = 0;
-
-      this._colliders = [];
-      this._lastColliderRefresh = 0;
-
-      this._char = null;
-
-      this._parseWaypoints();
-
-      // wait for scene load to build collider cache + nudge positions
-      this.el.sceneEl.addEventListener('loaded', () => {
-        this._refreshColliders(true);
-        this._nudgeIfInsideCollider();
-        this._sanitizeWaypoints();
-      });
-
-      // connect to character component as soon as it's ready
-      this.el.addEventListener('componentinitialized', (e) => {
-        if (e.detail && e.detail.name === 'character-npc') {
-          this._char = this.el.components['character-npc'] || null;
-        }
-      });
-    },
-
-    update: function () {
-      this._parseWaypoints();
-    },
-
-    _parseWaypoints: function () {
-      const s = (this.data.waypoints || '').trim();
-      this._wps = [];
-      if (!s) return;
-
-      const parts = s.split('|').map(p => p.trim()).filter(Boolean);
-      for (let i = 0; i < parts.length; i++) {
-        const tokens = parts[i].split(/\s+/).filter(Boolean);
-        if (tokens.length < 4) continue;
-
-        const x = parseFloat(tokens[0]);
-        const y = parseFloat(tokens[1]);
-        const z = parseFloat(tokens[2]);
-        const pause = parseFloat(tokens[3]) || 0;
-
-        let look = '';
-        for (let k = 4; k < tokens.length; k++) {
-          if (tokens[k].indexOf('look:') === 0) look = tokens[k].slice(5);
-        }
-
-        this._wps.push({
-          pos: new THREE.Vector3(x, y, z),
-          pause: pause,
-          look: look
-        });
-      }
-
-      if (this._wpIndex >= this._wps.length) this._wpIndex = 0;
-    },
-
-    _refreshColliders: function (force) {
-      const now = performance.now();
-      if (!force && (now - this._lastColliderRefresh) < 500) return;
-      this._lastColliderRefresh = now;
-
-      const scene = this.el.sceneEl;
-      if (!scene) return;
-
-      const els = Array.from(scene.querySelectorAll('.collider'));
-      // cache Box3 per collider
-      this._colliders = els.map(el => ({ el: el, box: new THREE.Box3() }));
-
-      for (let i = 0; i < this._colliders.length; i++) {
-        const c = this._colliders[i];
-        if (!c.el.object3D) continue;
-        c.el.object3D.updateWorldMatrix(true, true);
-        c.box.setFromObject(c.el.object3D);
-      }
-    },
-
-    _isCircleOverlappingBoxXZ: function (cx, cz, r, box) {
-      // closest point on AABB in XZ
-      const x = clamp(cx, box.min.x, box.max.x);
-      const z = clamp(cz, box.min.z, box.max.z);
-      const dx = cx - x;
-      const dz = cz - z;
-      return (dx * dx + dz * dz) <= (r * r);
-    },
-
-    _isBlockedAt: function (x, z) {
-      const r = this.data.radius;
-      for (let i = 0; i < this._colliders.length; i++) {
-        const box = this._colliders[i].box;
-        if (this._isCircleOverlappingBoxXZ(x, z, r, box)) return true;
-      }
-      return false;
-    },
-
-    _findNearestFreeSpot: function (basePos) {
-      // ring/spiral search around basePos in XZ
-      const ox = basePos.x;
-      const oy = basePos.y;
-      const oz = basePos.z;
-
-      // already free
-      if (!this._isBlockedAt(ox, oz)) return new THREE.Vector3(ox, oy, oz);
-
-      const maxR = 2.2;
-      const stepR = 0.12;
-      for (let r = stepR; r <= maxR; r += stepR) {
-        const steps = Math.max(10, Math.floor((Math.PI * 2 * r) / 0.18));
-        for (let i = 0; i < steps; i++) {
-          const a = (i / steps) * Math.PI * 2;
-          const x = ox + Math.cos(a) * r;
-          const z = oz + Math.sin(a) * r;
-          if (!this._isBlockedAt(x, z)) return new THREE.Vector3(x, oy, z);
-        }
-      }
-      return new THREE.Vector3(ox, oy, oz);
-    },
-
-    _nudgeIfInsideCollider: function () {
-      this._refreshColliders(true);
-      const p = this.el.object3D.position;
-      if (this._isBlockedAt(p.x, p.z)) {
-        const fixed = this._findNearestFreeSpot(p);
-        this.el.object3D.position.set(fixed.x, fixed.y, fixed.z);
-      }
-    },
-
-    _sanitizeWaypoints: function () {
-      this._refreshColliders(true);
-      for (let i = 0; i < this._wps.length; i++) {
-        const wp = this._wps[i];
-        if (this._isBlockedAt(wp.pos.x, wp.pos.z)) {
-          const fixed = this._findNearestFreeSpot(wp.pos);
-          wp.pos.copy(fixed);
-        }
-      }
-    },
-
-    _rotateTowardYaw: function (targetYaw, dtS) {
-      const turnSpeedRad = (this.data.turnSpeed * Math.PI / 180);
-      const cur = this.el.object3D.rotation.y;
-      let delta = targetYaw - cur;
-      // wrap to [-pi, pi]
-      delta = Math.atan2(Math.sin(delta), Math.cos(delta));
-      const maxStep = turnSpeedRad * dtS;
-      const step = clamp(delta, -maxStep, maxStep);
-      this.el.object3D.rotation.y = cur + step;
-    },
-
-    _yawToFacePointXZ: function (fromX, fromZ, toX, toZ) {
-      const dx = toX - fromX;
-      const dz = toZ - fromZ;
-      if (Math.abs(dx) < EPS && Math.abs(dz) < EPS) return this.el.object3D.rotation.y;
-      // A-Frame: yaw 0 faces -Z, so yaw = atan2(dx, -dz)
-      return Math.atan2(dx, -dz);
-    },
-
-    _tryMoveWithSlide: function (stepX, stepZ) {
-      const p = this.el.object3D.position;
-      const nx = p.x + stepX;
-      const nz = p.z + stepZ;
-
-      if (!this._isBlockedAt(nx, nz)) {
-        p.x = nx; p.z = nz;
-        return true;
-      }
-
-      // slide: try offsets left/right along perpendicular in small increments
-      const dirLen = Math.sqrt(stepX * stepX + stepZ * stepZ) + EPS;
-      const dx = stepX / dirLen;
-      const dz = stepZ / dirLen;
-      const px = -dz;
-      const pz = dx;
-
-      const baseStepX = stepX * 0.85;
-      const baseStepZ = stepZ * 0.85;
-
-      const slideStep = this.data.slideStep;
-      const tries = this.data.slideTries;
-
-      for (let i = 1; i <= tries; i++) {
-        const off = slideStep * i;
-
-        // left
-        let tx = p.x + baseStepX + px * off;
-        let tz = p.z + baseStepZ + pz * off;
-        if (!this._isBlockedAt(tx, tz)) {
-          p.x = tx; p.z = tz;
-          return true;
-        }
-
-        // right
-        tx = p.x + baseStepX - px * off;
-        tz = p.z + baseStepZ - pz * off;
-        if (!this._isBlockedAt(tx, tz)) {
-          p.x = tx; p.z = tz;
-          return true;
-        }
-      }
-
-      // final fallback: tiny forward nibble
-      const nibble = 0.22;
-      const tx = p.x + stepX * nibble;
-      const tz = p.z + stepZ * nibble;
-      if (!this._isBlockedAt(tx, tz)) {
-        p.x = tx; p.z = tz;
-        return true;
-      }
-
-      return false;
-    },
-
-    tick: function (t, dt) {
-      const dtS = dt / 1000;
-      if (!dtS || dtS <= 0) return;
-      if (!this._wps.length) return;
-
-      this._refreshColliders(false);
-
-      if (!this._char) this._char = this.el.components['character-npc'] || null;
-
-      // cooldown after being blocked
-      if (this._blockedCooldown > 0) {
-        this._blockedCooldown = Math.max(0, this._blockedCooldown - dtS);
-        if (this._char) this._char.setMoving(false);
-        return;
-      }
-
-      const p = this.el.object3D.position;
-
-      // pausing at an artwork
-      if (this._pauseLeft > 0) {
-        this._pauseLeft = Math.max(0, this._pauseLeft - dtS);
-        if (this._char) this._char.setMoving(false);
-
-        // optionally rotate to face look target during pause
-        if (this._pauseLookSel) {
-          const targetEl = this.el.sceneEl.querySelector(this._pauseLookSel);
-          if (targetEl && targetEl.object3D) {
-            targetEl.object3D.getWorldPosition(TMP_V3);
-            const yaw = this._yawToFacePointXZ(p.x, p.z, TMP_V3.x, TMP_V3.z);
-            this._rotateTowardYaw(yaw, dtS);
-          }
-        }
-        return;
-      }
-
-      // current waypoint
-      const wp = this._wps[this._wpIndex];
-      if (!wp) return;
-
-      // planar distance to waypoint
-      const dx = wp.pos.x - p.x;
-      const dz = wp.pos.z - p.z;
-      const dist = Math.sqrt(dx * dx + dz * dz);
-
-      if (dist <= this.data.arrivalRadius) {
-        // arrive
-        const pause = Math.max(0, wp.pause || 0);
-        if (pause > 0) {
-          this._pauseLeft = pause;
-          this._pauseLookSel = wp.look || '';
-          if (this._char) this._char.setMoving(false);
-        } else {
-          this._pauseLookSel = '';
-        }
-
-        // advance (loop)
-        this._wpIndex = (this._wpIndex + 1) % this._wps.length;
-        return;
-      }
-
-      // move toward waypoint
-      const dirX = dx / (dist + EPS);
-      const dirZ = dz / (dist + EPS);
-
-      // rotate to face movement direction
-      const targetYaw = this._yawToFacePointXZ(p.x, p.z, p.x + dirX, p.z + dirZ);
-      this._rotateTowardYaw(targetYaw, dtS);
-
-      // proposed step
-      const step = this.data.speed * dtS;
-      const stepX = dirX * step;
-      const stepZ = dirZ * step;
-
-      const moved = this._tryMoveWithSlide(stepX, stepZ);
-      if (moved) {
-        // keep y aligned to current (or waypoint y if you want)
-        if (Math.abs(wp.pos.y - p.y) > 0.0001) p.y = wp.pos.y;
-        if (this._char) this._char.setMoving(true);
-      } else {
-        if (this._char) this._char.setMoving(false);
-        this._blockedCooldown = this.data.idleOnBlockedSeconds;
-      }
-    }
-  });
-})();
-</script>
-
 </head>
 <body>
 
@@ -1283,8 +803,7 @@ AFRAME.registerComponent('light-beam', {
   <ul>
     <li><strong>Move:</strong> WASD / Arrow Keys</li>
     <li><strong>Look:</strong> Mouse</li>
-        <li><strong>Unlock mouse:</strong> Press <strong>ESC</strong> to release the cursor</li>
-<li><strong>Interact:</strong> Press <span class="keycap keycap-ask">ASK</span> to enable clicks, then click the call button</li>
+        <li><strong>Interact:</strong> Left-click while looking at the call button (no visible reticle)</li>
     <li><strong>Elevator:</strong> Press the button to open/close doors</li>
   </ul>
   <p class="muted">Step back to dismiss this guide.</p>
@@ -1467,29 +986,6 @@ AFRAME.registerComponent('light-beam', {
 <img crossorigin="anonymous" id="photo_label_tex" src="fear-room/assets/photo_label.webp"/>
 
 <a-asset-item id="smartphoneGLB" crossorigin="anonymous" src="fear-room/assets/station_05_assets/smartphone.glb"></a-asset-item>
-
-<!-- NPC character GLBs (idle + walk in-place) -->
-<a-asset-item id="npc_frank_idle" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/Frank_Idle.glb"></a-asset-item>
-<a-asset-item id="npc_frank_walk" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/frank_walk.glb"></a-asset-item>
-
-<a-asset-item id="npc_james_idle" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/James_idle.glb"></a-asset-item>
-<a-asset-item id="npc_james_walk" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/James_walk.glb"></a-asset-item>
-
-<a-asset-item id="npc_gionni_idle" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/gionni_idle.glb"></a-asset-item>
-<a-asset-item id="npc_gionni_walk" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/gionni_walk.glb"></a-asset-item>
-
-<a-asset-item id="npc_kate_idle" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/kate_idle.glb"></a-asset-item>
-<a-asset-item id="npc_kate_walk" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/kate_walk.glb"></a-asset-item>
-
-<a-asset-item id="npc_leo_idle" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/leo_idle.glb"></a-asset-item>
-<a-asset-item id="npc_leo_walk" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/leo_walk.glb"></a-asset-item>
-
-<a-asset-item id="npc_louise_idle" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/louise_idle.glb"></a-asset-item>
-<a-asset-item id="npc_louise_walk" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/louise_walk.glb"></a-asset-item>
-
-<a-asset-item id="npc_suzie_idle" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/suzie_idle.glb"></a-asset-item>
-<a-asset-item id="npc_suzie_walk" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/suzie_walk.glb"></a-asset-item>
-
 </a-assets>
 <a-entity light="type: ambient; intensity: 0.12; color: #ccdbff"></a-entity>
 <a-entity light="type: directional; intensity: 0.75; color: #f0f0ff; castShadow: true; shadowBias: -0.001; shadowMapHeight: 2048; shadowMapWidth: 2048" position="6 10 8"></a-entity>
@@ -2229,68 +1725,10 @@ AFRAME.registerComponent('light-beam', {
 </a-box>
 <a-box class="collider station2-collider" depth="0.65" height="6.20" material="color:#000000; transparent:true; opacity:0" position="8.5 3.00 10.5" width="0.65">
 </a-box>
-
-<!-- -------------------------------------------------------------------------
-     NPC Crowd (gallery visitors)
-     - NPCs walk + pause in front of artworks and avoid .collider volumes.
-     - To add/remove visitors: duplicate or delete <a-entity> blocks below.
----------------------------------------------------------------------------- -->
-<a-entity id="npcCrowd">
-  <!-- Loop A: screen → station 2 → station 4 text → station 5 -->
-  <a-entity id="npc_frank_1" position="6 0 6" rotation="0 0 0"
-            character-npc="idleSrc: #npc_frank_idle; walkSrc: #npc_frank_walk"
-            npc-patrol="waypoints: 2.4 0 10.0 10 look:#projection_screen_station_1|7.0 0 8.0 0|9.4 0 12.2 9 look:#station2|13.8 0 16.3 0|18.6 0 23.2 8 look:#s4_station_text|21.6 0 26.2 7 look:#station5_C_lobbying_policy_timeline_panel|21.6 0 28.2 7 look:#station5_B_ownership_control_register_panel|18.0 0 29.0 0|12.0 0 22.0 0; speed: 0.95; turnSpeed: 140; arrivalRadius: 0.45; radius: 0.28">
-  </a-entity>
-
-  <a-entity id="npc_james_1" position="8 0 6.6" rotation="0 0 0"
-            character-npc="idleSrc: #npc_james_idle; walkSrc: #npc_james_walk"
-            npc-patrol="waypoints: 3.0 0 9.0 6 look:#projection_screen_station_1|8.0 0 9.4 0|9.4 0 12.2 10 look:#station2|12.8 0 15.2 0|18.6 0 23.2 6 look:#s4_station_text|20.15 0 28.4 8 look:#station5_D_accountability_register_panel|17.0 0 27.0 0|12.0 0 20.5 0; speed: 0.85; turnSpeed: 150; arrivalRadius: 0.45; radius: 0.28">
-  </a-entity>
-
-  <!-- Loop B: Station 3 wall strip (multiple stops in front of panels) -->
-  <a-entity id="npc_gionni_1" position="14.2 0 6.8" rotation="0 0 0"
-            character-npc="idleSrc: #npc_gionni_idle; walkSrc: #npc_gionni_walk"
-            npc-patrol="waypoints: 16.2 0 7.5 10 look:#station3_B1_panel|16.2 0 9.4 10 look:#station3_B2_panel|16.2 0 11.3 10 look:#station3_B3_panel|16.2 0 13.2 10 look:#station3_B4_panel|16.0 0 14.9 8 look:#station3_B5_panel|14.0 0 13.0 0|12.6 0 10.0 0|13.8 0 7.0 0; speed: 0.8; turnSpeed: 170; arrivalRadius: 0.42; radius: 0.27">
-  </a-entity>
-
-  <a-entity id="npc_kate_1" position="13.2 0 8.6" rotation="0 0 0"
-            character-npc="idleSrc: #npc_kate_idle; walkSrc: #npc_kate_walk"
-            npc-patrol="waypoints: 16.0 0 8.6 7 look:#station3_B2_panel|16.0 0 10.6 7 look:#station3_B3_panel|16.0 0 12.6 7 look:#station3_B4_panel|14.6 0 15.0 0|12.0 0 14.2 12|12.0 0 11.0 0|13.0 0 9.0 0; speed: 0.75; turnSpeed: 170; arrivalRadius: 0.42; radius: 0.27">
-  </a-entity>
-
-  <!-- Loop C: Station 4 bay (wall cases + datacenter) -->
-  <a-entity id="npc_leo_1" position="8.4 0 18.0" rotation="0 0 0"
-            character-npc="idleSrc: #npc_leo_idle; walkSrc: #npc_leo_walk"
-            npc-patrol="waypoints: 7.2 0 21.0 0|6.4 0 23.8 10 look:#s4_wall_A3_mount|6.4 0 26.4 10 look:#s4_wall_A4_mount|7.0 0 28.2 8 look:#s4_wall_A5A6_stack|8.6 0 21.3 8 look:#station4_datacenter|10.1 0 21.0 7 look:#s4_station_text|9.2 0 17.0 0|7.2 0 14.0 0; speed: 0.82; turnSpeed: 155; arrivalRadius: 0.42; radius: 0.28">
-  </a-entity>
-
-  <a-entity id="npc_louise_1" position="7.2 0 16.5" rotation="0 0 0"
-            character-npc="idleSrc: #npc_louise_idle; walkSrc: #npc_louise_walk"
-            npc-patrol="waypoints: 6.6 0 26.4 9 look:#s4_wall_A4_mount|6.6 0 23.8 9 look:#s4_wall_A3_mount|7.2 0 21.2 0|9.0 0 21.4 8 look:#station4_datacenter|11.2 0 20.8 8 look:#s4_station_text|12.0 0 18.0 0|10.0 0 15.0 0; speed: 0.78; turnSpeed: 160; arrivalRadius: 0.42; radius: 0.28">
-  </a-entity>
-
-  <!-- Loop D: Wall 2 → Station 2 → Station 5 -->
-  <a-entity id="npc_suzie_1" position="14.8 0 4.8" rotation="0 0 0"
-            character-npc="idleSrc: #npc_suzie_idle; walkSrc: #npc_suzie_walk"
-            npc-patrol="waypoints: 15.6 0 5.9 8 look:#Wall2B_panel|16.8 0 3.6 8 look:#Wall2_panel|14.0 0 6.8 0|10.6 0 10.2 0|9.4 0 12.2 7 look:#station2|14.2 0 19.0 0|18.8 0 25.8 0|21.6 0 26.2 8 look:#station5_C_lobbying_policy_timeline_panel|21.6 0 28.2 8 look:#station5_B_ownership_control_register_panel; speed: 0.86; turnSpeed: 160; arrivalRadius: 0.45; radius: 0.28">
-  </a-entity>
-
-  <!-- Small "chat cluster" near the center (two visitors linger at the same stop) -->
-  <a-entity id="npc_frank_2" position="12.6 0 13.6" rotation="0 0 0"
-            character-npc="idleSrc: #npc_frank_idle; walkSrc: #npc_frank_walk"
-            npc-patrol="waypoints: 12.0 0 14.2 14|11.2 0 12.2 0|10.2 0 10.2 0|12.0 0 9.8 0|13.2 0 11.4 0; speed: 0.62; turnSpeed: 190; arrivalRadius: 0.40; radius: 0.28">
-  </a-entity>
-
-  <a-entity id="npc_james_2" position="11.6 0 13.0" rotation="0 0 0"
-            character-npc="idleSrc: #npc_james_idle; walkSrc: #npc_james_walk"
-            npc-patrol="waypoints: 11.4 0 14.4 14|12.2 0 12.0 0|13.4 0 10.8 0|12.2 0 9.6 0|10.8 0 11.2 0; speed: 0.62; turnSpeed: 190; arrivalRadius: 0.40; radius: 0.28">
-  </a-entity>
-</a-entity>
-
 <a-entity id="rig" position="9 0 -7.5" rotation="0 180 0" rig-walk="speed: 2.6; radius: 0.28" elevator-user-guide="target: #industrial_elevator_1; showDistance: 6">
 <a-entity camera="fov: 60; near: 0.05; far: 1000; zoom: 1.08" id="playerCam" initial-yaw="yaw: 0" look-controls="pointerLockEnabled: true" pitch-clamp="min: -80; max: 80" position="0 1.6 0" rotation="0 0 0">
 <a-entity id="headLamp" light="type: spot; color: #fffef0; intensity: 0.8; angle: 50; penumbra: 0.5; distance: 10; decay: 1.5; castShadow: true" position="0 0 0"></a-entity>
-<a-entity cursor="rayOrigin: mouse"></a-entity>
+<a-entity cursor="rayOrigin: entity; fuse: false" raycaster="objects: .clickable, .grabbable; far: 6"></a-entity>
 </a-entity>
 </a-entity>
 <script>
