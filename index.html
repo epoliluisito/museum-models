@@ -4503,7 +4503,6 @@ AFRAME.registerComponent('pbr-carpet', {
 <!-- ===== INSERTED: Elevator Key Activation + Open Message ===== -->
 <script>
 (function () {
-  const KEY_CODE = 'KeyE';
   const USE_DISTANCE = 1.6; // meters from the call panel
 
   const hint = document.getElementById('hint');
@@ -4526,7 +4525,17 @@ AFRAME.registerComponent('pbr-carpet', {
     delete hint.dataset.owner;
   }
 
-  function setup() {
+  function isUseKey(e) {
+    // Prefer physical key (layout-independent). Fallback to character.
+    if (e.code) return e.code === 'KeyE';
+    const k = (e.key || '').toLowerCase();
+    return k === 'e';
+  }
+
+  function setupOnce() {
+    if (setupOnce._done) return;
+    setupOnce._done = true;
+
     const elevator = document.querySelector('#industrial_elevator_1');
     const cam = document.querySelector('#playerCam');
     const callPanel = document.querySelector('#elevator1_call_panel') || document.querySelector('#elevator1_call_button');
@@ -4543,18 +4552,19 @@ AFRAME.registerComponent('pbr-carpet', {
       return _a.distanceTo(_b) <= USE_DISTANCE;
     }
 
-    // Key activation (works under pointer lock, no ESC required)
-    document.addEventListener('keydown', (e) => {
-      if (e.code !== KEY_CODE || e.repeat) return;
+    // Key activation (capture phase so other handlers can't swallow it)
+    window.addEventListener('keydown', (e) => {
+      if (!isUseKey(e) || e.repeat) return;
 
       // Avoid triggering while typing in any UI element (defensive)
       const active = document.activeElement;
       if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
 
       if (nearCallPanel()) {
+        if (e.preventDefault) e.preventDefault();
         elevator.emit('elevator1-toggle');
       }
-    }, { passive: true });
+    }, true);
 
     // Open message (shown when doors open; hidden when doors close)
     if (doorL) {
@@ -4567,14 +4577,19 @@ AFRAME.registerComponent('pbr-carpet', {
     }
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', setup);
+  // Prefer waiting for the A-Frame scene to load so transforms are ready.
+  const scene = document.querySelector('a-scene');
+  if (scene) {
+    if (scene.hasLoaded) setupOnce();
+    else scene.addEventListener('loaded', setupOnce, { once: true });
   } else {
-    setup();
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setupOnce, { once: true });
+    else setupOnce();
   }
 })();
 </script>
 <!-- ===== END INSERTED: Elevator Key Activation + Open Message ===== -->
+
 
 
 
