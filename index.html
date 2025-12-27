@@ -2110,7 +2110,7 @@ AFRAME.registerComponent('screen-always-on', {
             // Positional audio (separate element, synced to video time).
             this.el.setAttribute('positional-media-audio', {
               el: (this.data.audio || this.data.video),
-              volume: 0.68,
+              volume: 0.75,
               refDistance: 1.4,
               maxDistance: 22.0,
               rolloffFactor: 1.4
@@ -4445,7 +4445,7 @@ AFRAME.registerComponent('pbr-carpet', {
   AFRAME.registerComponent('elevator-user-guide', {
     schema: {
       target: { type: 'selector' },
-      showDistance: { type: 'number', default: 6 }
+      showDistance: { type: 'number', default: 4 }
     },
 
     init: function () {
@@ -4716,6 +4716,20 @@ AFRAME.registerComponent('pbr-carpet', {
       WALKING.currentTime = 0;
       WALKING.muted = !audioEnabled;
       safePlay(WALKING).catch(() => {});
+
+      // Start fading slightly before the video ends (crossfade into the room).
+      const _fadeLead = 1.4; // seconds
+      const _onTime = () => {
+        try {
+          const dur = WALKING.duration || 0;
+          if (dur && (dur - WALKING.currentTime) <= _fadeLead) {
+            WALKING.removeEventListener('timeupdate', _onTime);
+            fadeIntoRoom();
+          }
+        } catch (e) {}
+      };
+      WALKING.addEventListener('timeupdate', _onTime);
+
       WALKING.onended = () => fadeIntoRoom();
     } else {
       fadeIntoRoom();
@@ -4737,7 +4751,7 @@ AFRAME.registerComponent('pbr-carpet', {
 
       resumePlayerMovement();
       tryStartRoomAudio();
-    }, 1200);
+    }, 1400);
   }
 
   // Quit flow
