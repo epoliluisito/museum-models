@@ -393,51 +393,6 @@ AFRAME.registerComponent('light-beam', {
       }
     });
 
-    // Desktop "grab" (no external deps). Add class="grabbable" to objects you want to pick up.
-    // Grab: mousedown. Drop: mouseup. While grabbed, object is held in front of the camera.
-    AFRAME.registerComponent('desktop-grabbable', {
-      schema: { holdDistance: { type: 'number', default: 0.6 } },
-      init: function () {
-        this.cam = document.getElementById('playerCam') || document.querySelector('[camera]');
-        this._worldPos = new THREE.Vector3();
-        this._worldQuat = new THREE.Quaternion();
-        this._worldScale = new THREE.Vector3();
-        this._grabbed = false;
-        this._origParent = null;
-
-        this.el.addEventListener('mousedown', () => this.grab());
-        this.el.addEventListener('mouseup',   () => this.drop());
-      },
-      grab: function () {
-        if (this._grabbed || !this.cam) return;
-        this._grabbed = true;
-
-        // Save original parent so we can restore later.
-        this._origParent = this.el.object3D.parent;
-
-        // Hold in front of camera (local space), so it's stable in pointer-lock.
-        this.cam.object3D.add(this.el.object3D);
-        this.el.object3D.position.set(0, -0.10, -this.data.holdDistance);
-        this.el.object3D.rotation.set(0, 0, 0);
-      },
-      drop: function () {
-        if (!this._grabbed) return;
-        this._grabbed = false;
-
-        // Convert current world transform, then reattach to original parent (or scene).
-        this.el.object3D.updateMatrixWorld(true);
-        this.el.object3D.getWorldPosition(this._worldPos);
-        this.el.object3D.getWorldQuaternion(this._worldQuat);
-        this.el.object3D.getWorldScale(this._worldScale);
-
-        const parent = this._origParent || this.el.sceneEl.object3D;
-        parent.add(this.el.object3D);
-        this.el.object3D.position.copy(this._worldPos);
-        this.el.object3D.quaternion.copy(this._worldQuat);
-        this.el.object3D.scale.copy(this._worldScale);
-      }
-    });
-
   })();
   </script>
 <style>
@@ -803,7 +758,8 @@ AFRAME.registerComponent('light-beam', {
   <ul>
     <li><strong>Move:</strong> WASD / Arrow Keys</li>
     <li><strong>Look:</strong> Mouse</li>
-        <li><strong>Interact:</strong> Left-click while looking at the call button (no visible reticle)</li>
+        <li><strong>Unlock mouse:</strong> Press <strong>ESC</strong> to release the cursor</li>
+<li><strong>Interact:</strong> Press <span class="keycap keycap-ask">ASK</span> to enable clicks, then click the call button</li>
     <li><strong>Elevator:</strong> Press the button to open/close doors</li>
   </ul>
   <p class="muted">Step back to dismiss this guide.</p>
@@ -1728,7 +1684,7 @@ AFRAME.registerComponent('light-beam', {
 <a-entity id="rig" position="9 0 -7.5" rotation="0 180 0" rig-walk="speed: 2.6; radius: 0.28" elevator-user-guide="target: #industrial_elevator_1; showDistance: 6">
 <a-entity camera="fov: 60; near: 0.05; far: 1000; zoom: 1.08" id="playerCam" initial-yaw="yaw: 0" look-controls="pointerLockEnabled: true" pitch-clamp="min: -80; max: 80" position="0 1.6 0" rotation="0 0 0">
 <a-entity id="headLamp" light="type: spot; color: #fffef0; intensity: 0.8; angle: 50; penumbra: 0.5; distance: 10; decay: 1.5; castShadow: true" position="0 0 0"></a-entity>
-<a-entity cursor="rayOrigin: entity; fuse: false" raycaster="objects: .clickable, .grabbable; far: 6"></a-entity>
+<a-entity cursor="rayOrigin: mouse"></a-entity>
 </a-entity>
 </a-entity>
 <script>
