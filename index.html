@@ -758,9 +758,9 @@ AFRAME.registerComponent('light-beam', {
   <ul>
     <li><strong>Move:</strong> WASD / Arrow Keys</li>
     <li><strong>Look:</strong> Mouse</li>
-        <li><strong>Unlock mouse:</strong> Press <strong>ESC</strong> to release the cursor</li>
-<li><strong>Interact:</strong> Press <span class="keycap keycap-ask">ASK</span> to enable clicks, then click the call button</li>
-    <li><strong>Elevator:</strong> Press the button to open/close doors</li>
+        <li><strong>Unlock mouse (optional):</strong> Press <strong>ESC</strong> to release the cursor</li>
+<li><strong>Interact:</strong> Press <span class="keycap">E</span> to activate the elevator</li>
+    <li><strong>Elevator:</strong> Press <span class="keycap">E</span> to open/close doors</li>
   </ul>
   <p class="muted">Step back to dismiss this guide.</p>
 </div>
@@ -4499,6 +4499,84 @@ AFRAME.registerComponent('pbr-carpet', {
 })();
 </script>
 <!-- ===== END PATCH ===== -->
+
+<!-- ===== INSERTED: Elevator Key Activation + Open Message ===== -->
+<script>
+(function () {
+  const KEY_CODE = 'KeyE';
+  const USE_DISTANCE = 1.6; // meters from the call panel
+
+  const hint = document.getElementById('hint');
+  function canUseHint() {
+    if (!hint) return false;
+    const owner = hint.dataset.owner;
+    return (hint.style.display === 'none' || hint.style.display === '' || owner === 'elevator');
+  }
+  function showElevatorHint(html) {
+    if (!hint || !canUseHint()) return;
+    hint.dataset.owner = 'elevator';
+    hint.style.display = 'block';
+    hint.innerHTML = html;
+  }
+  function hideElevatorHint() {
+    if (!hint) return;
+    if (hint.dataset.owner !== 'elevator') return;
+    hint.style.display = 'none';
+    hint.innerHTML = '';
+    delete hint.dataset.owner;
+  }
+
+  function setup() {
+    const elevator = document.querySelector('#industrial_elevator_1');
+    const cam = document.querySelector('#playerCam');
+    const callPanel = document.querySelector('#elevator1_call_panel') || document.querySelector('#elevator1_call_button');
+    const doorL = document.querySelector('#elevator1_door_L');
+
+    if (!elevator || !cam || !callPanel) return;
+
+    const _a = new THREE.Vector3();
+    const _b = new THREE.Vector3();
+
+    function nearCallPanel() {
+      cam.object3D.getWorldPosition(_a);
+      callPanel.object3D.getWorldPosition(_b);
+      return _a.distanceTo(_b) <= USE_DISTANCE;
+    }
+
+    // Key activation (works under pointer lock, no ESC required)
+    document.addEventListener('keydown', (e) => {
+      if (e.code !== KEY_CODE || e.repeat) return;
+
+      // Avoid triggering while typing in any UI element (defensive)
+      const active = document.activeElement;
+      if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
+
+      if (nearCallPanel()) {
+        elevator.emit('elevator1-toggle');
+      }
+    }, { passive: true });
+
+    // Open message (shown when doors open; hidden when doors close)
+    if (doorL) {
+      doorL.addEventListener('elevator1-open', () => {
+        showElevatorHint("Elevator open — by entering the elevator you can choose to access the next level.");
+      });
+      doorL.addEventListener('elevator1-close', () => {
+        hideElevatorHint();
+      });
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setup);
+  } else {
+    setup();
+  }
+})();
+</script>
+<!-- ===== END INSERTED: Elevator Key Activation + Open Message ===== -->
+
+
 
 
 
