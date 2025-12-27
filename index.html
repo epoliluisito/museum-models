@@ -748,6 +748,223 @@ AFRAME.registerComponent('light-beam', {
   }
 </style>
 
+
+<script>
+/**
+ * NPC animation swapper for the "characters" (each character exists once, swapping between idle and walk GLBs).
+ * - Uses THREE.AnimationMixer directly (no external animation-mixer dependency).
+ * - Swaps `gltf-model` between two preloaded <a-asset-item> entries.
+ */
+AFRAME.registerComponent('npc-anim-swap', {
+  schema: {
+    idle: { type: 'selector' },
+    walk: { type: 'selector' },
+    state: { default: 'idle' } // 'idle' | 'walk'
+  },
+
+  init: function () {
+    this.mixer = null;
+    this._state = null;
+    this._onModelLoaded = this._handleModelLoaded.bind(this);
+    this.el.addEventListener('model-loaded', this._onModelLoaded);
+    this.setState(this.data.state);
+  },
+
+  remove: function () {
+    this.el.removeEventListener('model-loaded', this._onModelLoaded);
+    if (this.mixer) {
+      try { this.mixer.stopAllAction(); } catch (e) {}
+      this.mixer = null;
+    }
+  },
+
+  setState: function (state) {
+    state = (state === 'walk') ? 'walk' : 'idle';
+    if (this._state === state) return;
+
+    const srcEl = (state === 'walk') ? this.data.walk : this.data.idle;
+    if (!srcEl || !srcEl.id) return;
+
+    this._state = state;
+    // Swapping model will trigger model-loaded; we rebuild the mixer there.
+    this.el.setAttribute('gltf-model', '#' + srcEl.id);
+  },
+
+  _handleModelLoaded: function (evt) {
+    const model = this.el.getObject3D('mesh');
+    if (!model) return;
+
+    // Tear down previous mixer (model has changed).
+    if (this.mixer) {
+      try { this.mixer.stopAllAction(); } catch (e) {}
+      this.mixer = null;
+    }
+
+    // Build a new mixer & auto-play the first clip in the GLB.
+    this.mixer = new THREE.AnimationMixer(model);
+
+    const gltf = evt && evt.detail && evt.detail.model ? evt.detail.model : null;
+    const clips = (gltf && gltf.animations && gltf.animations.length) ? gltf.animations
+                 : (model.animations && model.animations.length ? model.animations : []);
+
+    if (clips && clips.length) {
+      const action = this.mixer.clipAction(clips[0]);
+      action.reset();
+      action.play();
+    }
+  },
+
+  tick: function (t, dt) {
+    if (!this.mixer) return;
+    this.mixer.update((dt || 0) / 1000);
+  }
+});
+
+/**
+ * Simple gallery patrol:
+ * - Walks between a list of waypoint entities, idles for a random duration at each.
+ * - While idle, optionally "social looks" at nearby NPCs (within socialRadius).
+ */
+AFRAME.registerComponent('npc-patrol', {
+  schema: {
+    points: { default: '' },              // "#wp1, #wp2, #wp3"
+    speed: { default: 0.75 },             // meters/sec
+    arriveDist: { default: 0.28 },        // meters
+    minIdle: { default: 1.8 },            // seconds
+    maxIdle: { default: 4.5 },            // seconds
+    turnSpeed: { default: 3.2 },          // radians/sec (approx)
+    socialRadius: { default: 1.8 },       // meters
+    socialChance: { default: 0.35 }       // probability per idle stop to look at someone
+  },
+
+  init: function () {
+    this._pts = [];
+    this._idx = 0;
+    this._mode = 'idle'; // 'walk' | 'idle'
+    this._idleLeft = 0;
+    this._lookAtEl = null;
+
+    // Parse waypoint selectors.
+    const raw = (this.data.points || '').split(',').map(s => s.trim()).filter(Boolean);
+    raw.forEach(sel => {
+      const el = document.querySelector(sel);
+      if (el) this._pts.push(el);
+    });
+
+    if (!this._pts.length) return;
+
+    // Randomize starting target a bit so characters don't sync.
+    this._idx = Math.floor(Math.random() * this._pts.length);
+
+    // Start idle briefly at spawn, then move.
+    this._setIdle(this._rand(this.data.minIdle, this.data.maxIdle));
+  },
+
+  _rand: function (a, b) {
+    return a + Math.random() * (b - a);
+  },
+
+  _setWalk: function () {
+    this._mode = 'walk';
+    this._idleLeft = 0;
+    this._lookAtEl = null;
+    const anim = this.el.components['npc-anim-swap'];
+    if (anim) anim.setState('walk');
+  },
+
+  _setIdle: function (secs) {
+    this._mode = 'idle';
+    this._idleLeft = Math.max(0, secs || 0);
+    const anim = this.el.components['npc-anim-swap'];
+    if (anim) anim.setState('idle');
+
+    // Decide whether to "social look" at someone during this stop.
+    this._lookAtEl = null;
+    if (Math.random() < this.data.socialChance) {
+      const selfPos = this.el.object3D.position;
+      const others = Array.from(document.querySelectorAll('.npc'));
+      let best = null, bestD = Infinity;
+      for (let i = 0; i < others.length; i++) {
+        const o = others[i];
+        if (o === this.el) continue;
+        const p = o.object3D && o.object3D.position;
+        if (!p) continue;
+        const dx = p.x - selfPos.x, dz = p.z - selfPos.z;
+        const d = Math.sqrt(dx*dx + dz*dz);
+        if (d < bestD) { bestD = d; best = o; }
+      }
+      if (best && bestD <= this.data.socialRadius) this._lookAtEl = best;
+    }
+  },
+
+  tick: function (t, dt) {
+    if (!this._pts.length) return;
+
+    const dts = (dt || 0) / 1000;
+    const obj = this.el.object3D;
+    const pos = obj.position;
+
+    if (this._mode === 'idle') {
+      this._idleLeft -= dts;
+
+      // While idle, slowly face either a nearby NPC or the current waypoint (as "art focus").
+      const targetEl = this._lookAtEl || this._pts[this._idx];
+      if (targetEl && targetEl.object3D) {
+        const tp = targetEl.object3D.position;
+        const dx = tp.x - pos.x;
+        const dz = tp.z - pos.z;
+        if (dx*dx + dz*dz > 0.0001) {
+          const desiredYaw = Math.atan2(dx, dz); // A-Frame faces -Z by default; we treat yaw around Y.
+          const curYaw = obj.rotation.y;
+          let delta = desiredYaw - curYaw;
+          // Wrap to [-pi, pi]
+          delta = Math.atan2(Math.sin(delta), Math.cos(delta));
+          const maxStep = this.data.turnSpeed * dts;
+          obj.rotation.y = curYaw + Math.max(-maxStep, Math.min(maxStep, delta));
+        }
+      }
+
+      if (this._idleLeft <= 0) {
+        this._setWalk();
+      }
+      return;
+    }
+
+    // Walk mode: move toward current waypoint.
+    const wp = this._pts[this._idx];
+    if (!wp || !wp.object3D) return;
+
+    const tp = wp.object3D.position;
+    const dx = tp.x - pos.x;
+    const dz = tp.z - pos.z;
+    const dist = Math.sqrt(dx*dx + dz*dz);
+
+    // Face movement direction.
+    if (dist > 0.0001) {
+      const desiredYaw = Math.atan2(dx, dz);
+      const curYaw = obj.rotation.y;
+      let delta = desiredYaw - curYaw;
+      delta = Math.atan2(Math.sin(delta), Math.cos(delta));
+      const maxStep = this.data.turnSpeed * dts;
+      obj.rotation.y = curYaw + Math.max(-maxStep, Math.min(maxStep, delta));
+    }
+
+    if (dist <= this.data.arriveDist) {
+      // Arrived: idle, then pick next point.
+      this._idx = (this._idx + 1) % this._pts.length;
+      this._setIdle(this._rand(this.data.minIdle, this.data.maxIdle));
+      return;
+    }
+
+    const step = Math.min(dist, this.data.speed * dts);
+    if (dist > 0.00001) {
+      pos.x += (dx / dist) * step;
+      pos.z += (dz / dist) * step;
+    }
+  }
+});
+</script>
+
 </head>
 <body>
 
@@ -942,6 +1159,20 @@ AFRAME.registerComponent('light-beam', {
 <img crossorigin="anonymous" id="photo_label_tex" src="fear-room/assets/photo_label.webp"/>
 
 <a-asset-item id="smartphoneGLB" crossorigin="anonymous" src="fear-room/assets/station_05_assets/smartphone.glb"></a-asset-item>
+
+  <!-- Character GLBs (idle + walk) -->
+  <a-asset-item id="npc_james_idle" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/James_idle.glb"></a-asset-item>
+  <a-asset-item id="npc_james_walk" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/James_walk.glb"></a-asset-item>
+
+  <a-asset-item id="npc_louise_idle" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/louise_idle.glb"></a-asset-item>
+  <a-asset-item id="npc_louise_walk" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/louise_walk.glb"></a-asset-item>
+
+  <a-asset-item id="npc_frank_idle" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/Frank_Idle.glb"></a-asset-item>
+  <a-asset-item id="npc_frank_walk" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/frank_walk.glb"></a-asset-item>
+
+  <a-asset-item id="npc_kate_idle" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/kate_idle.glb"></a-asset-item>
+  <a-asset-item id="npc_kate_walk" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/kate_walk.glb"></a-asset-item>
+
 </a-assets>
 <a-entity light="type: ambient; intensity: 0.12; color: #ccdbff"></a-entity>
 <a-entity light="type: directional; intensity: 0.75; color: #f0f0ff; castShadow: true; shadowBias: -0.001; shadowMapHeight: 2048; shadowMapWidth: 2048" position="6 10 8"></a-entity>
@@ -1681,7 +1912,66 @@ AFRAME.registerComponent('light-beam', {
 </a-box>
 <a-box class="collider station2-collider" depth="0.65" height="6.20" material="color:#000000; transparent:true; opacity:0" position="8.5 3.00 10.5" width="0.65">
 </a-box>
-<a-entity id="rig" position="9 0 -7.5" rotation="0 180 0" rig-walk="speed: 2.6; radius: 0.28" elevator-user-guide="target: #industrial_elevator_1; showDistance: 5">
+
+  <!-- ========================= -->
+  <!-- CHARACTERS (NPCs) - WIP  -->
+  <!-- ========================= -->
+
+  <!-- Waypoints (invisible) -->
+  <a-entity id="npcWaypoints">
+    <a-entity id="wp_station2_front" position="7.8 0 12.4" visible="false"></a-entity>
+    <a-entity id="wp_station2_side"  position="10.4 0 11.2" visible="false"></a-entity>
+
+    <a-entity id="wp_mid_1"          position="14.5 0 16.8" visible="false"></a-entity>
+
+    <a-entity id="wp_elevator"       position="20.8 0 17.2" visible="false"></a-entity>
+
+    <a-entity id="wp_station5_front" position="20.0 0 27.8" visible="false"></a-entity>
+    <a-entity id="wp_station5_side"  position="17.6 0 29.2" visible="false"></a-entity>
+  </a-entity>
+
+  <!-- Characters (each exists once; swaps between idle/walk) -->
+  <a-entity id="characters">
+
+    <a-entity id="character_kate"
+              class="npc character"
+              position="7.8 0 12.4"
+              rotation="0 180 0"
+              scale="1 1 1"
+              npc-anim-swap="idle: #npc_kate_idle; walk: #npc_kate_walk; state: idle"
+              npc-patrol="points: #wp_station2_front, #wp_mid_1, #wp_station2_side, #wp_station2_front; speed: 0.72; minIdle: 2.2; maxIdle: 5.2;">
+    </a-entity>
+
+    <a-entity id="character_james"
+              class="npc character"
+              position="20.0 0 27.8"
+              rotation="0 0 0"
+              scale="1 1 1"
+              npc-anim-swap="idle: #npc_james_idle; walk: #npc_james_walk; state: walk"
+              npc-patrol="points: #wp_station5_front, #wp_station5_side, #wp_elevator, #wp_station5_front; speed: 0.85; minIdle: 1.6; maxIdle: 4.2;">
+    </a-entity>
+
+    <a-entity id="character_frank"
+              class="npc character"
+              position="20.8 0 17.2"
+              rotation="0 90 0"
+              scale="1 1 1"
+              npc-anim-swap="idle: #npc_frank_idle; walk: #npc_frank_walk; state: idle"
+              npc-patrol="points: #wp_elevator, #wp_mid_1, #wp_station2_side, #wp_elevator; speed: 0.78; minIdle: 2.0; maxIdle: 4.8;">
+    </a-entity>
+
+    <a-entity id="character_louise"
+              class="npc character"
+              position="14.5 0 16.8"
+              rotation="0 180 0"
+              scale="1 1 1"
+              npc-anim-swap="idle: #npc_louise_idle; walk: #npc_louise_walk; state: walk"
+              npc-patrol="points: #wp_mid_1, #wp_station2_front, #wp_station5_side, #wp_mid_1; speed: 0.75; minIdle: 2.4; maxIdle: 6.0;">
+    </a-entity>
+
+  </a-entity>
+
+<a-entity id="rig" position="6.5 0 14.0" rotation="0 0 0" rig-walk="speed: 2.6; radius: 0.28" elevator-user-guide="target: #industrial_elevator_1; showDistance: 5">
 <a-entity camera="fov: 60; near: 0.05; far: 1000; zoom: 1.08" id="playerCam" initial-yaw="yaw: 0" look-controls="pointerLockEnabled: true" pitch-clamp="min: -80; max: 80" position="0 1.6 0" rotation="0 0 0">
 <a-entity id="headLamp" light="type: spot; color: #fffef0; intensity: 0.8; angle: 50; penumbra: 0.5; distance: 10; decay: 1.5; castShadow: true" position="0 0 0"></a-entity>
 <a-entity cursor="rayOrigin: mouse"></a-entity>
