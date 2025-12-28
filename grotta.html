@@ -426,6 +426,11 @@ AFRAME.registerComponent('light-beam', {
     }
     #fade.show { opacity: 1; }
 
+
+
+  /* ===== Override: start directly in the cave (no intro video screen) ===== */
+  #introScreen { display: none !important; }
+
 </style>
 
 <style>
@@ -5071,7 +5076,7 @@ AFRAME.registerComponent('pbr-carpet', {
 
   setAudioEnabled(false);
 
-  buildLoadTasks().then(showIntro).catch(showIntro);
+  buildLoadTasks().then(fadeIntoRoom).catch(fadeIntoRoom);
 })();
 </script>
 
