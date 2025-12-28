@@ -929,7 +929,7 @@ AFRAME.registerComponent('light-beam', {
       sepDist: { type: 'number', default: 1.25 },
       sepStrength: { type: 'number', default: 1.10 },
 
-      modelYaw: { type: 'number', default: 180 }        // extra yaw to align Mixamo forward
+      modelYaw: { type: 'number', default: 0 }        // extra yaw to align Mixamo forward
     },
 
     init: function(){
@@ -4913,7 +4913,7 @@ AFRAME.registerComponent('pbr-carpet', {
 
   <!-- KATE (Station 3 visitor) -->
   <a-entity id="CHAR_KATE" position="15.10 0 7.20" rotation="0 0 0"
-            npc-gallery-walker="name: KATE; speed: 0.85; waypoints: #wp_s3_a1, #wp_s3_a2, #wp_s3_mid, #wp_s3_mid2, #wp_s3_c1, #wp_s3_c2; meetSelector: #wp_meet, #wp_meet2, #wp_meet3; meetChance: 0.26; meetCooldown: 34; artWaitMin: 12; artWaitMax: 26; meetWaitMin: 6; meetWaitMax: 11; modelYaw: 180">
+            npc-gallery-walker="name: KATE; speed: 0.85; waypoints: #wp_s3_a1, #wp_s3_a2, #wp_s3_mid, #wp_s3_mid2, #wp_s3_c1, #wp_s3_c2; meetSelector: #wp_meet, #wp_meet2, #wp_meet3; meetChance: 0.26; meetCooldown: 34; artWaitMin: 12; artWaitMax: 26; meetWaitMin: 6; meetWaitMax: 11; modelYaw: 0">
     <a-cylinder class="npc-placeholder" radius="0.28" height="1.65" position="0 0.825 0"
                 material="shader: standard; color: #ffffff; opacity: 0.18; transparent: true; roughness: 0.9; metalness: 0.0"></a-cylinder>
 
@@ -4928,7 +4928,7 @@ AFRAME.registerComponent('pbr-carpet', {
 
   <!-- FRANK (deep in Station 3) -->
   <a-entity id="CHAR_FRANK" position="15.40 0 15.60" rotation="0 180 0"
-            npc-gallery-walker="name: FRANK; speed: 0.90; waypoints: #wp_s3_c1, #wp_s3_c2, #wp_s3_mid2, #wp_s3_mid, #wp_s3_a2; meetSelector: #wp_meet, #wp_meet2, #wp_meet3; meetChance: 0.22; meetCooldown: 36; artWaitMin: 10; artWaitMax: 24; meetWaitMin: 5; meetWaitMax: 10; modelYaw: 180">
+            npc-gallery-walker="name: FRANK; speed: 0.90; waypoints: #wp_s3_c1, #wp_s3_c2, #wp_s3_mid2, #wp_s3_mid, #wp_s3_a2; meetSelector: #wp_meet, #wp_meet2, #wp_meet3; meetChance: 0.22; meetCooldown: 36; artWaitMin: 10; artWaitMax: 24; meetWaitMin: 5; meetWaitMax: 10; modelYaw: 0">
     <a-cylinder class="npc-placeholder" radius="0.28" height="1.65" position="0 0.825 0"
                 material="shader: standard; color: #ffffff; opacity: 0.18; transparent: true; roughness: 0.9; metalness: 0.0"></a-cylinder>
 
@@ -4943,7 +4943,7 @@ AFRAME.registerComponent('pbr-carpet', {
 
   <!-- JAMES (Station 4 visitor) -->
   <a-entity id="CHAR_JAMES" position="6.40 0 25.90" rotation="0 180 0"
-            npc-gallery-walker="name: JAMES; speed: 1.00; waypoints: #wp_s4_a4, #wp_s4_back, #wp_s4_mid, #wp_s4_dc, #wp_s4_a2, #wp_s4_entry, #wp_s4_wall; meetSelector: #wp_meet, #wp_meet2, #wp_meet3; meetChance: 0.20; meetCooldown: 40; artWaitMin: 11; artWaitMax: 25; meetWaitMin: 6; meetWaitMax: 12; modelYaw: 180">
+            npc-gallery-walker="name: JAMES; speed: 1.00; waypoints: #wp_s4_a4, #wp_s4_back, #wp_s4_mid, #wp_s4_dc, #wp_s4_a2, #wp_s4_entry, #wp_s4_wall; meetSelector: #wp_meet, #wp_meet2, #wp_meet3; meetChance: 0.20; meetCooldown: 40; artWaitMin: 11; artWaitMax: 25; meetWaitMin: 6; meetWaitMax: 12; modelYaw: 0">
     <a-cylinder class="npc-placeholder" radius="0.28" height="1.65" position="0 0.825 0"
                 material="shader: standard; color: #ffffff; opacity: 0.18; transparent: true; roughness: 0.9; metalness: 0.0"></a-cylinder>
 
@@ -4958,7 +4958,7 @@ AFRAME.registerComponent('pbr-carpet', {
 
   <!-- LOUISE (connector between Station 3 and 4) -->
   <a-entity id="CHAR_LOUISE" position="11.80 0 20.10" rotation="0 180 0"
-            npc-gallery-walker="name: LOUISE; speed: 0.88; waypoints: #wp_conn1, #wp_conn2, #wp_s3_mid, #wp_s4_entry, #wp_s4_a2, #wp_s4_dc; meetSelector: #wp_meet, #wp_meet2, #wp_meet3; meetChance: 0.30; meetCooldown: 28; artWaitMin: 12; artWaitMax: 28; meetWaitMin: 7; meetWaitMax: 13; modelYaw: 180">
+            npc-gallery-walker="name: LOUISE; speed: 0.88; waypoints: #wp_conn1, #wp_conn2, #wp_s3_mid, #wp_s4_entry, #wp_s4_a2, #wp_s4_dc; meetSelector: #wp_meet, #wp_meet2, #wp_meet3; meetChance: 0.30; meetCooldown: 28; artWaitMin: 12; artWaitMax: 28; meetWaitMin: 7; meetWaitMax: 13; modelYaw: 0">
     <a-cylinder class="npc-placeholder" radius="0.28" height="1.65" position="0 0.825 0"
                 material="shader: standard; color: #ffffff; opacity: 0.18; transparent: true; roughness: 0.9; metalness: 0.0"></a-cylinder>
 
