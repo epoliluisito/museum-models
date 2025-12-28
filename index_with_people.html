@@ -802,178 +802,134 @@ AFRAME.registerComponent('light-beam', {
       // If placeholder exists but is empty, populate it.
       if (!el.querySelector('.title')) {
         el.innerHTML = '<div class="title">NPC LOAD STATUS</div>' +
-          HUD_KEYS.map(k => `<div class="line" data-key="${k}">${k.replace(' idle','').replace(' walk','')}${k.endsWith('idle')? ' idle:' : ' walk:'} <span class="v">loading...</span></div>`).join('');
+          HUD_KEYS.map(k => '<div class="row"><div class="k">'+k+':</div><div class="v" data-k="'+k+'">loading…</div></div>').join('') +
+          '<div class="row" style="margin-top:6px; opacity:.65;"><div class="v">Tip: open DevTools Console to see glTF loader errors.</div></div>';
       }
       return el;
     }
     el = document.createElement('div');
     el.id = 'npcHud';
-    el.style.cssText = 'position:fixed;left:14px;bottom:14px;z-index:99999;padding:10px 12px;background:rgba(0,0,0,.55);color:#fff;font-family:monospace;font-size:12px;line-height:1.35;border-radius:8px;max-width:360px;pointer-events:none;';
-    el.innerHTML = '<div class="title" style="font-weight:700;margin-bottom:6px;">NPC LOAD STATUS</div>' +
-      HUD_KEYS.map(k => `<div class="line" data-key="${k}">${k.replace(' idle','').replace(' walk','')}${k.endsWith('idle')? ' idle:' : ' walk:'} <span class="v">loading...</span></div>`).join('') +
-      '<div style="opacity:.65;margin-top:6px;">Tip: open DevTools Console if something fails.</div>';
+    el.innerHTML = '<div class="title">NPC LOAD STATUS</div>' +
+      HUD_KEYS.map(k => '<div class="row"><div class="k">'+k+':</div><div class="v" data-k="'+k+'">loading…</div></div>').join('') +
+      '<div class="row" style="margin-top:6px; opacity:.65;"><div class="v">Tip: open DevTools Console to see glTF loader errors.</div></div>';
     document.body.appendChild(el);
     return el;
   }
 
-  function setHud(key, value){
-    const hud = ensureHud();
-    const row = hud.querySelector(`.line[data-key="${key}"] .v`);
-    if (row) row.textContent = value;
+  function setHud(key, text, cls){
+    const el = ensureHud();
+    const v = el.querySelector('[data-k="'+key+'"]');
+    if (!v) return;
+    v.classList.remove('ok','bad','warn');
+    if (cls) v.classList.add(cls);
+    v.textContent = text;
   }
 
-  // --- NPC registry (for separation + social look) ----------------------
-  const NPC_REG = {};
-  function getNPCList(){
-    return Object.values(NPC_REG).filter(Boolean);
-  }
+  window.__npcHud = { set: setHud, ensure: ensureHud };
 
-  // --- Collidables auto-tagging -----------------------------------------
-  function autoTagCollidables(){
-    // We tag likely-structural elements as .collidable so NPCs don't walk through them.
-    // Heuristics: ids containing wall/panel/pillar/column/door/frame/divider/mount.
-    const candidates = Array.from(document.querySelectorAll('[id]'));
-    const isBad = (id)=> (id.includes('floor') || id.includes('ceiling') || id.includes('sky') || id.includes('fog') || id.includes('light'));
-    const isGood = (id)=> (
-      id.includes('wall') || id.includes('panel') || id.includes('pillar') || id.includes('column') ||
-      id.includes('door') || id.includes('frame') || id.includes('divider') || id.includes('mount')
-    );
-
-    let count = 0;
-    candidates.forEach(el=>{
-      if (el.closest('#npc-waypoints') || el.closest('#characters')) return;
-      const id = (el.id || '').toLowerCase();
-      if (!id) return;
-      if (isBad(id)) return;
-      if (!isGood(id)) return;
-      el.classList.add('collidable');
-      count++;
-    });
-    // Expose for debugging.
-    window.__npcCollidablesTagged = count;
-    console.log('[NPC] autoTagCollidables:', count, 'elements tagged as .collidable');
-  }
-
-  window.addEventListener('load', ()=>{
-    const scene = document.querySelector('a-scene');
-    if (!scene) return;
-    if (scene.hasLoaded) autoTagCollidables();
-    else scene.addEventListener('loaded', autoTagCollidables);
-  });
-
-  // --- GLTF fallback loader ---------------------------------------------
-  // Use as: gltf-fallback='urls: ["...","..."]; statusKey: "KATE idle"'
+  // --- glTF fallback loader ---------------------------------------------
+  // Usage:
+  // gltf-fallback="urls: [...]; statusKey: KATE idle"
   AFRAME.registerComponent('gltf-fallback', {
     schema: {
-      urls: { default: [] },        // array of strings
-      statusKey: { default: '' }    // HUD key
+      urls: { type: 'string', default: '[]' },    // JSON array string
+      statusKey: { type: 'string', default: '' }
     },
     init: function(){
-      this._try = 0;
+      this._i = 0;
       this._urls = [];
+      try { this._urls = JSON.parse(this.data.urls) || []; } catch(e){ this._urls = []; }
       this._statusKey = this.data.statusKey || '';
-      // Parse JSON-ish array passed as string in HTML attribute (already in the file).
-      try {
-        this._urls = Array.isArray(this.data.urls) ? this.data.urls : [];
-      } catch(e){ this._urls = []; }
+      this._onLoaded = this._onLoaded.bind(this);
+      this._onError  = this._onError.bind(this);
 
-      // Some A-Frame versions stringify arrays; handle that.
-      if (typeof this.data.urls === 'string'){
-        try { this._urls = JSON.parse(this.data.urls); } catch(e){ this._urls = []; }
-      }
+      this.el.addEventListener('model-loaded', this._onLoaded);
+      this.el.addEventListener('model-error',  this._onError);
 
-      if (!this._urls || this._urls.length === 0){
-        if (this._statusKey) setHud(this._statusKey, 'FAILED (no urls)');
-        return;
-      }
-      this._loadNext();
+      // Start.
+      if (window.__npcHud) window.__npcHud.ensure();
+      this._try();
     },
-    _loadNext: function(){
-      const el = this.el;
+    remove: function(){
+      this.el.removeEventListener('model-loaded', this._onLoaded);
+      this.el.removeEventListener('model-error',  this._onError);
+    },
+    _try: function(){
+      const key = this._statusKey;
       const urls = this._urls;
-      if (this._try >= urls.length){
-        if (this._statusKey) setHud(this._statusKey, 'FAILED (all sources)');
-        el.emit('gltf-fallback-error', {statusKey: this._statusKey});
+      if (!urls.length){
+        if (window.__npcHud && key) window.__npcHud.set(key, 'NO URLS', 'bad');
         return;
       }
-      const url = urls[this._try];
-      this._try++;
-
-      if (this._statusKey) setHud(this._statusKey, `loading (${new URL(url).hostname})`);
-
-      const onLoaded = ()=>{
-        el.removeEventListener('model-loaded', onLoaded);
-        el.removeEventListener('model-error', onError);
-        if (this._statusKey) setHud(this._statusKey, `ok (${new URL(url).hostname})`);
-        // Slightly improve visuals for Mixamo: ensure double-sided, avoid weird "side clipping" on thin geo.
-        try {
-          el.object3D.traverse(o=>{
-            if (!o.isMesh || !o.material) return;
-            const mats = Array.isArray(o.material) ? o.material : [o.material];
-            mats.forEach(m=>{
-              if (!m) return;
-              m.side = THREE.DoubleSide;
-              // For many Mixamo materials alpha is unused; keep stable defaults:
-              if (m.transparent) m.depthWrite = true;
-            });
-          });
-        } catch(e){}
-        el.emit('gltf-fallback-loaded', {url, statusKey: this._statusKey});
-      };
-
-      const onError = (evt)=>{
-        el.removeEventListener('model-loaded', onLoaded);
-        el.removeEventListener('model-error', onError);
-        console.warn('[gltf-fallback] model-error for', url, evt && evt.detail ? evt.detail : evt);
+      const url = urls[Math.min(this._i, urls.length-1)];
+      if (window.__npcHud && key) window.__npcHud.set(key, 'trying ' + (this._i+1) + '/' + urls.length, 'warn');
+      // Set the model URL directly.
+      this.el.setAttribute('gltf-model', url);
+    },
+    _onLoaded: function(){
+      const key = this._statusKey;
+      const url = this._urls[Math.min(this._i, this._urls.length-1)];
+      if (window.__npcHud && key) window.__npcHud.set(key, 'ok (' + (new URL(url)).hostname + ')', 'ok');
+      // Improve Mixamo visuals: force DoubleSide to reduce side/backface artifacts.
+      try {
+        this.el.object3D.traverse(function(o){
+          if (!o.isMesh || !o.material) return;
+          var mats = Array.isArray(o.material) ? o.material : [o.material];
+          mats.forEach(function(m){ if (m) m.side = THREE.DoubleSide; });
+        });
+      } catch(e){}
+    },
+    _onError: function(e){
+      const key = this._statusKey;
+      const urls = this._urls;
+      // Advance to next URL if any.
+      const msg = (e && e.detail && (e.detail.message || e.detail.error || e.detail)) ? (e.detail.message || e.detail.error || String(e.detail)) : 'model-error';
+      if (this._i < urls.length - 1){
+        if (window.__npcHud && key) window.__npcHud.set(key, 'error → retry (' + msg + ')', 'warn');
+        this._i++;
         // Small delay avoids spamming the loader.
-        setTimeout(()=>this._loadNext(), 120);
-      };
-
-      el.addEventListener('model-loaded', onLoaded);
-      el.addEventListener('model-error', onError);
-      el.setAttribute('gltf-model', url);
+        setTimeout(() => this._try(), 150);
+      } else {
+        if (window.__npcHud && key) window.__npcHud.set(key, 'FAILED (' + msg + ')', 'bad');
+      }
     }
   });
 
-  // --- NPC gallery walker (idle/walk swap + waypoint roaming + basic avoidance) ----
-  // NOTE: This is lightweight avoidance, not full navmesh pathfinding.
-  // It prevents walking THROUGH marked collidables and reduces NPC overlap.
+  // --- NPC simple gallery walker ----------------------------------------
+  // One entity "exists once"; children hold idle + walk models. We toggle visibility.
+  // Waypoints are passed as a selector string (e.g. ".wpKate").
+  const NPC_REG = {};
+  window.__npcRegistry = NPC_REG;
+
   AFRAME.registerComponent('npc-gallery-walker', {
     schema: {
       name: { type: 'string', default: 'NPC' },
       speed: { type: 'number', default: 0.9 },
       arrive: { type: 'number', default: 0.40 },
-      minTravel: { type: 'number', default: 2.2 },     // ensure next target isn't basically current spot
 
-      // Long "looking at art" dwell time.
+      // Behavior tuning
+      minTravel: { type: 'number', default: 2.4 },      // don't pick targets too close to current position
       artWaitMin: { type: 'number', default: 12.0 },
       artWaitMax: { type: 'number', default: 26.0 },
+      meetWaitMin: { type: 'number', default: 6.0 },
+      meetWaitMax: { type: 'number', default: 12.0 },
 
-      // Shorter "chat at meet point" dwell time.
-      meetWaitMin: { type: 'number', default: 5.0 },
-      meetWaitMax: { type: 'number', default: 10.0 },
-
-      // Back-compat (unused in this build, but kept so existing attrs don't break).
-      waitMin: { type: 'number', default: 1.5 },
-      waitMax: { type: 'number', default: 4.0 },
-
-      // Selector list for art stop waypoints.
-      waypoints: { type: 'string', default: '' },
-
-      // Selector for shared meet points (so NPCs can converge).
+      // Waypoints
+      waypoints: { type: 'string', default: '' },       // selector list "#wp1, #wp2, ..."
       meetSelector: { type: 'string', default: '' },
-      meetChance: { type: 'number', default: 0.20 },
+      meetChance: { type: 'number', default: 0.22 },
       meetCooldown: { type: 'number', default: 30.0 },
 
-      // Avoidance
-      colliderSelector: { type: 'string', default: '.collidable' },
-      avoidDist: { type: 'number', default: 0.80 },    // stop/steer if obstacle this close
-      avoidStrength: { type: 'number', default: 1.25 },
-      sepDist: { type: 'number', default: 1.10 },      // keep NPCs from stacking
-      sepStrength: { type: 'number', default: 1.0 },
-      repathAfter: { type: 'number', default: 1.0 },   // seconds blocked before repicking target
+      // Collision-ish avoidance (lightweight; no navmesh)
+      colliderSelector: { type: 'string', default: 'a-box, a-plane, a-cylinder, a-sphere, a-entity[geometry], a-entity[gltf-model]' },
+      avoidDist: { type: 'number', default: 0.90 },     // ray length
+      repathAfter: { type: 'number', default: 1.0 },    // seconds blocked before picking a new target
 
-      modelYaw: { type: 'number', default: 180 }       // extra yaw to align Mixamo forward
+      // Keep NPCs from stacking
+      sepDist: { type: 'number', default: 1.25 },
+      sepStrength: { type: 'number', default: 1.10 },
+
+      modelYaw: { type: 'number', default: 180 }        // extra yaw to align Mixamo forward
     },
 
     init: function(){
@@ -986,10 +942,10 @@ AFRAME.registerComponent('light-beam', {
       this.walkEl = this.el.querySelector('.npc-walk');
       this.placeholderEl = this.el.querySelector('.npc-placeholder');
 
-      // Apply modelYaw (align Mixamo) directly to both idle/walk holders.
+      // Apply modelYaw to the visible model holders (keeps parent yaw free for navigation).
       const yaw = this.data.modelYaw || 0;
-      if (this.idleEl) this.idleEl.setAttribute('rotation', {x:0, y:yaw, z:0});
-      if (this.walkEl) this.walkEl.setAttribute('rotation', {x:0, y:yaw, z:0});
+      if (this.idleEl) this.idleEl.setAttribute('rotation', {x: 0, y: yaw, z: 0});
+      if (this.walkEl) this.walkEl.setAttribute('rotation', {x: 0, y: yaw, z: 0});
 
       this._state = 'idle';
       this._waitT = this._rand(this.data.artWaitMin, this.data.artWaitMax);
@@ -1001,22 +957,24 @@ AFRAME.registerComponent('light-beam', {
 
       this._blockedT = 0;
 
+      // Collision cache
       this._raycaster = new THREE.Raycaster();
       this._colliderMeshes = [];
+      this._colliderTimer = 999;
+
       this._refreshWaypoints();
-      this._collectCollidersSoon();
+      this.el.sceneEl.addEventListener('loaded', () => {
+        this._refreshWaypoints();
+        this._collectColliders();
+      });
 
-      // Refresh colliders occasionally (scene may stream-in assets).
-      this._colliderTimer = 0;
-
-      // Hide placeholder once a model loads.
-      const onLoaded = ()=>{
+      // Hide placeholder once any model is loaded (idle OR walk).
+      const hidePlaceholderIfLoaded = () => {
         if (this.placeholderEl) this.placeholderEl.setAttribute('visible', false);
-        this.el.removeEventListener('gltf-fallback-loaded', onLoaded);
       };
-      this.el.addEventListener('gltf-fallback-loaded', onLoaded);
+      if (this.idleEl) this.idleEl.addEventListener('model-loaded', hidePlaceholderIfLoaded);
+      if (this.walkEl) this.walkEl.addEventListener('model-loaded', hidePlaceholderIfLoaded);
 
-      // Ensure initial state is idle (show idle model only).
       this._setState('idle');
     },
 
@@ -1028,7 +986,7 @@ AFRAME.registerComponent('light-beam', {
       const dt = Math.min(0.05, dtMs / 1000); // clamp
       if (!this._wpsArt.length && !this._wpsMeet.length) return;
 
-      // Refresh collider meshes ~ every 2 seconds.
+      // Refresh collider mesh list ~ every 2 seconds.
       this._colliderTimer += dt;
       if (this._colliderTimer > 2.0){
         this._colliderTimer = 0;
@@ -1040,166 +998,89 @@ AFRAME.registerComponent('light-beam', {
       if (this._state === 'idle'){
         this._waitT -= dt;
 
-        // tiny social look: if another NPC is close, glance toward them
+        // Soft social look-at if someone is close.
         this._socialLook(dt);
 
         if (this._waitT <= 0){
           this._pickNextTarget();
-          if (this._target) this._setState('walk');
-          else {
-            // no target? wait again.
-            this._waitT = this._rand(this.data.artWaitMin, this.data.artWaitMax);
-          }
+          this._setState('walk');
         }
         return;
       }
 
-      // walking
-      if (!this._target) { this._pickNextTarget(); if (!this._target){ this._setState('idle'); return; } }
+      // WALK state
+      if (!this._target) this._pickNextTarget();
+      if (!this._target) return;
 
       const pos = this.el.object3D.position;
       const tgt = this._target.object3D.position;
 
-      const dx = tgt.x - pos.x;
-      const dz = tgt.z - pos.z;
-      const dist = Math.sqrt(dx*dx + dz*dz);
+      let dx = tgt.x - pos.x;
+      let dz = tgt.z - pos.z;
+      let dist = Math.sqrt(dx*dx + dz*dz);
 
       if (dist <= this.data.arrive){
         // Arrived
         this._setState('idle');
 
         const isMeet = this._isMeet(this._target);
-        if (isMeet){
-          this._waitT = this._rand(this.data.meetWaitMin, this.data.meetWaitMax);
-          this._meetCd = this.data.meetCooldown; // reset cooldown after meeting
-        } else {
-          this._waitT = this._rand(this.data.artWaitMin, this.data.artWaitMax);
-        }
+        this._waitT = isMeet
+          ? this._rand(this.data.meetWaitMin, this.data.meetWaitMax)
+          : this._rand(this.data.artWaitMin, this.data.artWaitMax);
+
+        if (isMeet) this._meetCd = this.data.meetCooldown;
 
         // Face the thing we arrived at.
         if (dist > 0.001){
           const desiredYaw = Math.atan2(dx, dz) * 180 / Math.PI;
-          this.el.setAttribute('rotation', {x:0, y:desiredYaw, z:0});
+          this.el.setAttribute('rotation', {x: 0, y: desiredYaw, z: 0});
         }
         return;
       }
 
-      // Desired direction to target
-      const desired = new THREE.Vector3(dx, 0, dz);
-      desired.normalize();
+      // Movement direction.
+      let nx = dx / (dist || 1);
+      let nz = dz / (dist || 1);
 
-      // Separation from other NPCs
+      // Separation (keep NPCs from piling up).
       const sep = this._separationVector();
+      nx += sep.x;
+      nz += sep.z;
+      const nlen = Math.sqrt(nx*nx + nz*nz) || 1;
+      nx /= nlen; nz /= nlen;
 
-      // Obstacle avoidance (push away from nearest hit in front)
-      const avoid = this._avoidanceVector(desired, dt);
-
-      // Combine steering
-      const steer = desired.clone()
-        .add(sep.multiplyScalar(this.data.sepStrength))
-        .add(avoid.multiplyScalar(this.data.avoidStrength));
-
-      // If completely canceled, keep moving toward target.
-      if (steer.lengthSq() < 0.0001){
-        steer.copy(desired);
-      }
-      steer.normalize();
-
-      // If blocked for too long, repick target.
-      if (this._blockedT > this.data.repathAfter){
-        this._blockedT = 0;
-        this._pickNextTarget(true);
-      }
-
-      // Rotate towards steering direction
-      const desiredYaw = Math.atan2(steer.x, steer.z) * 180 / Math.PI;
+      // Turn towards movement direction (parent yaw only).
+      const desiredYaw = Math.atan2(nx, nz) * 180 / Math.PI;
       const curYaw = this.el.getAttribute('rotation').y;
-      const newYaw = this._lerpAngle(curYaw, desiredYaw, Math.min(1, dt * 4.0));
-      this.el.setAttribute('rotation', {x:0, y:newYaw, z:0});
+      const newYaw = this._lerpAngle(curYaw, desiredYaw, Math.min(1, dt * 4.2));
+      this.el.setAttribute('rotation', {x: 0, y: newYaw, z: 0});
 
-      // Step
+      // Obstacle avoidance: forward raycast against cached collider meshes.
+      const blocked = this._isBlocked(pos, nx, nz);
+
       const step = this.data.speed * dt;
-      pos.x += steer.x * step;
-      pos.z += steer.z * step;
-    },
 
-    _collectCollidersSoon: function(){
-      // A-frame builds meshes after a tick; wait a bit.
-      setTimeout(()=>this._collectColliders(), 250);
-      setTimeout(()=>this._collectColliders(), 1500);
-    },
+      if (blocked){
+        this._blockedT += dt;
 
-    _collectColliders: function(){
-      const sel = this.data.colliderSelector || '.collidable';
-      const els = Array.from(document.querySelectorAll(sel)).filter(e=>{
-        if (!e) return false;
-        if (e.closest('#npc-waypoints') || e.closest('#characters')) return false;
-        return true;
-      });
+        // Try a small sidestep to "slide" around the obstacle.
+        const sidestep = this._bestSideStep(pos, nx, nz);
+        pos.x += sidestep.x * step * 0.75;
+        pos.z += sidestep.z * step * 0.75;
 
-      const meshes = [];
-      els.forEach(el=>{
-        if (!el.object3D) return;
-        el.object3D.traverse(o=>{
-          if (o.isMesh) meshes.push(o);
-        });
-      });
-      this._colliderMeshes = meshes;
-    },
-
-    _avoidanceVector: function(forward, dt){
-      // Raycast a bit ahead at torso height.
-      const pos = this.el.object3D.position;
-      const origin = new THREE.Vector3(pos.x, pos.y + 1.0, pos.z);
-
-      if (!this._colliderMeshes || this._colliderMeshes.length === 0){
-        this._blockedT = Math.max(0, this._blockedT - dt); // decay
-        return new THREE.Vector3(0,0,0);
+        // If we're blocked for long enough, repick a target.
+        if (this._blockedT >= this.data.repathAfter){
+          this._blockedT = 0;
+          this._pickNextTarget(true);
+        }
+        return;
       }
 
-      this._raycaster.set(origin, forward);
-      this._raycaster.far = Math.max(0.01, this.data.avoidDist);
+      this._blockedT = 0;
 
-      const hits = this._raycaster.intersectObjects(this._colliderMeshes, true);
-      if (!hits || hits.length === 0){
-        this._blockedT = Math.max(0, this._blockedT - dt);
-        return new THREE.Vector3(0,0,0);
-      }
-
-      const hit = hits[0];
-      // Push away from the hit point.
-      const away = origin.clone().sub(hit.point);
-      away.y = 0;
-      const len = away.length();
-      if (len > 0.0001) away.multiplyScalar(1/len);
-
-      // Count as "blocked" only if very close.
-      this._blockedT += dt;
-
-      return away;
-    },
-
-    _separationVector: function(){
-      const pos = this.el.object3D.position;
-      const out = new THREE.Vector3(0,0,0);
-      const others = getNPCList();
-      const r = this.data.sepDist;
-
-      for (let i=0;i<others.length;i++){
-        const o = others[i];
-        if (!o || o === this.el) continue;
-        const op = o.object3D.position;
-        const dx = pos.x - op.x;
-        const dz = pos.z - op.z;
-        const d2 = dx*dx + dz*dz;
-        if (d2 < 0.0001) continue;
-        const d = Math.sqrt(d2);
-        if (d >= r) continue;
-        const w = (r - d) / r; // 0..1
-        out.x += (dx / d) * w;
-        out.z += (dz / d) * w;
-      }
-      return out;
+      // Move forward.
+      pos.x += nx * step;
+      pos.z += nz * step;
     },
 
     _refreshWaypoints: function(){
@@ -1210,53 +1091,50 @@ AFRAME.registerComponent('light-beam', {
       this._wpsMeet = meetSel ? Array.from(document.querySelectorAll(meetSel)) : [];
     },
 
-    _pickNextTarget: function(force){
+    _pickNextTarget: function(forceDifferent){
       const hasArt = this._wpsArt.length > 0;
       const hasMeet = this._wpsMeet.length > 0;
       if (!hasArt && !hasMeet) return;
 
-      const pos = this.el.object3D.position;
-      const minTravel = this.data.minTravel || 0;
+      const current = this._target;
+      const myPos = this.el.object3D.position;
+      const minD = this.data.minTravel;
 
-      // Occasionally converge to a meet point (shared by all) so NPCs cross paths.
-      if (hasMeet && (force || (this._meetCd <= 0 && Math.random() < this.data.meetChance))){
+      // Occasionally converge to meet points.
+      if (hasMeet && this._meetCd <= 0 && Math.random() < this.data.meetChance){
         let chosen = null;
         for (let tries = 0; tries < 10; tries++){
-          const cand = this._wpsMeet[Math.floor(Math.random() * this._wpsMeet.length)];
+          const cand = this._wpsMeet[(Math.random() * this._wpsMeet.length) | 0];
           if (!cand) continue;
-          const cp = cand.object3D.position;
-          const dx = cp.x - pos.x, dz = cp.z - pos.z;
-          const d = Math.sqrt(dx*dx + dz*dz);
-          if (d < minTravel) continue;
+          if (current && cand === current) continue;
+          const p = cand.object3D.position;
+          const d = Math.hypot(p.x - myPos.x, p.z - myPos.z);
+          if (d < minD) continue;
           chosen = cand; break;
         }
         this._target = chosen || this._wpsMeet[0];
         return;
       }
 
-      // Otherwise pick an art stop at least minTravel away.
+      // Otherwise pick an art stop.
       if (hasArt){
         let chosen = null;
-        for (let tries = 0; tries < 12; tries++){
-          const cand = this._wpsArt[Math.floor(Math.random() * this._wpsArt.length)];
+        for (let tries = 0; tries < 14; tries++){
+          const cand = this._wpsArt[(Math.random() * this._wpsArt.length) | 0];
           if (!cand) continue;
-          const cp = cand.object3D.position;
-          const dx = cp.x - pos.x, dz = cp.z - pos.z;
-          const d = Math.sqrt(dx*dx + dz*dz);
-          if (d < minTravel) continue;
+          if (current && cand === current) continue;
+          const p = cand.object3D.position;
+          const d = Math.hypot(p.x - myPos.x, p.z - myPos.z);
+          if (d < minD) continue;
           chosen = cand; break;
         }
-        this._target = chosen || this._wpsArt[Math.floor(Math.random() * this._wpsArt.length)];
+        if (!chosen && forceDifferent && hasMeet) chosen = this._wpsMeet[(Math.random() * this._wpsMeet.length) | 0];
+        this._target = chosen || this._wpsArt[0];
         return;
       }
 
       // Fallback: only meet points exist.
-      this._target = this._wpsMeet[Math.floor(Math.random() * this._wpsMeet.length)];
-    },
-
-    _isMeet: function(el){
-      if (!el) return false;
-      return el.classList && el.classList.contains('meet');
+      this._target = this._wpsMeet[0];
     },
 
     _setState: function(s){
@@ -1266,47 +1144,170 @@ AFRAME.registerComponent('light-beam', {
       if (this.walkEl) this.walkEl.setAttribute('visible', isWalk);
     },
 
+    _isMeet: function(wpEl){
+      return !!(wpEl && wpEl.classList && wpEl.classList.contains('meet'));
+    },
+
     _socialLook: function(dt){
-      // If another NPC is close while idling, glance toward them occasionally.
-      const pos = this.el.object3D.position;
-      let nearest = null;
-      let bestD = 999;
+      // If another NPC is close (<1.9), slowly turn towards them, but do NOT stall forever.
+      const myPos = this.el.object3D.position;
+      let nearest = null, nearestD = 999;
+      for (const k in NPC_REG){
+        const other = NPC_REG[k];
+        if (!other || other === this.el) continue;
+        const p = other.object3D.position;
+        const d = Math.hypot(p.x - myPos.x, p.z - myPos.z);
+        if (d < nearestD){ nearestD = d; nearest = other; }
+      }
+      if (!nearest || nearestD > 1.9) return;
 
-      const others = getNPCList();
-      for (let i=0;i<others.length;i++){
-        const o = others[i];
-        if (!o || o === this.el) continue;
-        const op = o.object3D.position;
-        const dx = op.x - pos.x;
-        const dz = op.z - pos.z;
+      const p = nearest.object3D.position;
+      const desiredYaw = Math.atan2((p.x - myPos.x), (p.z - myPos.z)) * 180 / Math.PI;
+      const curYaw = this.el.getAttribute('rotation').y;
+      const newYaw = this._lerpAngle(curYaw, desiredYaw, Math.min(1, dt * 1.6));
+      this.el.setAttribute('rotation', {x: 0, y: newYaw, z: 0});
+
+      // Only extend the wait a little (prevents "stuck facing each other forever").
+      this._waitT = Math.max(this._waitT, 0.6);
+    },
+
+    _separationVector: function(){
+      const myPos = this.el.object3D.position;
+      let sx = 0, sz = 0;
+      const r = this.data.sepDist;
+      const k = this.data.sepStrength;
+
+      for (const name in NPC_REG){
+        const other = NPC_REG[name];
+        if (!other || other === this.el) continue;
+        const p = other.object3D.position;
+        const dx = myPos.x - p.x;
+        const dz = myPos.z - p.z;
         const d = Math.sqrt(dx*dx + dz*dz);
-        if (d < bestD){
-          bestD = d;
-          nearest = o;
-        }
+        if (d < 0.0001 || d > r) continue;
+        const t = (r - d) / r;
+        sx += (dx / d) * t * k;
+        sz += (dz / d) * t * k;
       }
-      if (!nearest || bestD > 1.6) return;
+      return {x: sx, z: sz};
+    },
 
-      // small chance per second to turn toward them.
-      if (Math.random() < dt * 0.5){
-        const op = nearest.object3D.position;
-        const dx = op.x - pos.x;
-        const dz = op.z - pos.z;
-        const desiredYaw = Math.atan2(dx, dz) * 180 / Math.PI;
-        const curYaw = this.el.getAttribute('rotation').y;
-        const newYaw = this._lerpAngle(curYaw, desiredYaw, Math.min(1, dt * 2.0));
-        this.el.setAttribute('rotation', {x:0, y:newYaw, z:0});
+    _isBlocked: function(pos, nx, nz){
+      if (!this._colliderMeshes.length) return false;
+      const origin = new THREE.Vector3(pos.x, pos.y + 0.9, pos.z);
+      const dir = new THREE.Vector3(nx, 0, nz).normalize();
+
+      this._raycaster.set(origin, dir);
+      this._raycaster.far = this.data.avoidDist;
+
+      const hits = this._raycaster.intersectObjects(this._colliderMeshes, true);
+      if (!hits || !hits.length) return false;
+
+      // Ignore if hit is part of our own NPC.
+      for (let i = 0; i < hits.length; i++){
+        const o = hits[i].object;
+        if (!o) continue;
+        if (this._isOwnObject(o)) continue;
+        return true;
       }
+      return false;
+    },
+
+    _bestSideStep: function(pos, nx, nz){
+      // Choose the side with more free space by casting short rays left/right.
+      const left = {x: nz, z: -nx};
+      const right = {x: -nz, z: nx};
+
+      const lBlocked = this._sideBlocked(pos, left.x, left.z);
+      const rBlocked = this._sideBlocked(pos, right.x, right.z);
+
+      if (lBlocked && !rBlocked) return right;
+      if (rBlocked && !lBlocked) return left;
+
+      // If both blocked, just wiggle deterministically by name hash.
+      return (this.name.charCodeAt(0) % 2 === 0) ? left : right;
+    },
+
+    _sideBlocked: function(pos, sx, sz){
+      if (!this._colliderMeshes.length) return false;
+      const origin = new THREE.Vector3(pos.x, pos.y + 0.9, pos.z);
+      const dir = new THREE.Vector3(sx, 0, sz).normalize();
+      this._raycaster.set(origin, dir);
+      this._raycaster.far = Math.max(0.55, this.data.avoidDist * 0.65);
+      const hits = this._raycaster.intersectObjects(this._colliderMeshes, true);
+      if (!hits || !hits.length) return false;
+      for (let i = 0; i < hits.length; i++){
+        const o = hits[i].object;
+        if (o && !this._isOwnObject(o)) return true;
+      }
+      return false;
+    },
+
+    _isOwnObject: function(obj){
+      // Walk up parents; if any has an A-Frame element that's this.el or inside it, it's ours.
+      let o = obj;
+      while (o){
+        if (o.el){
+          const el = o.el;
+          if (el === this.el) return true;
+          if (el.closest && el.closest('#' + this.el.id) === this.el) return true;
+          if (el.closest && el.closest('#characters') && el.closest('#characters').contains(this.el) && el.closest('#characters').contains(el)) {
+            // doesn't guarantee; but we'll do a simpler check below
+          }
+          // If the element is inside this.el subtree:
+          if (this.el.contains && this.el.contains(el)) return true;
+        }
+        o = o.parent;
+      }
+      return false;
+    },
+
+    _collectColliders: function(){
+      const scene = this.el.sceneEl;
+      if (!scene) return;
+
+      const list = [];
+      const candidates = Array.from(scene.querySelectorAll(this.data.colliderSelector));
+      for (let i = 0; i < candidates.length; i++){
+        const el = candidates[i];
+
+        // Ignore anything in NPC system / waypoints / camera rig.
+        if (el.closest && (el.closest('#characters') || el.closest('#npc-waypoints'))) continue;
+        if (el.id && /floor|ground|ceiling|roof/i.test(el.id)) continue;
+        if (el.classList && el.classList.contains('npc-agent')) continue;
+
+        // Only if it has a mesh already.
+        const o3d = el.object3D;
+        if (!o3d) continue;
+
+        o3d.traverse(obj => {
+          if (!obj.isMesh) return;
+          // Exclude very large flat horizontals (floor-like).
+          try{
+            const g = obj.geometry;
+            if (g && !g.boundingBox) g.computeBoundingBox();
+            if (g && g.boundingBox){
+              const bb = g.boundingBox;
+              const sx = bb.max.x - bb.min.x;
+              const sy = bb.max.y - bb.min.y;
+              const sz = bb.max.z - bb.min.z;
+              if (sy < 0.08 && (sx > 8 || sz > 8) && (o3d.position.y < 0.25)) return;
+            }
+          }catch(e){}
+          list.push(obj);
+        });
+      }
+      this._colliderMeshes = list;
     },
 
     _rand: function(a,b){ return a + Math.random() * (b-a); },
 
     _lerpAngle: function(a,b,t){
-      // shortest path
       let d = ((b - a + 540) % 360) - 180;
       return a + d * t;
     }
   });
+
 })();
 </script>
 <!-- ===== END NPC SYSTEM ===== -->
@@ -4881,28 +4882,21 @@ AFRAME.registerComponent('pbr-carpet', {
   <!-- Station 3 (art stops) -->
   <a-entity id="wp_s3_a1" class="wp s3 art" position="15.10 0 7.40"></a-entity>
   <a-entity id="wp_s3_a2" class="wp s3 art" position="13.20 0 7.80"></a-entity>
-  <a-entity id="wp_s3_a3" class="wp s3 art" position="12.10 0 9.30"></a-entity>
-  <a-entity id="wp_s3_a4" class="wp s3 art" position="14.40 0 9.10"></a-entity>
 
   <a-entity id="wp_s3_mid" class="wp s3 art" position="15.10 0 11.40"></a-entity>
   <a-entity id="wp_s3_mid2" class="wp s3 art" position="13.60 0 12.30"></a-entity>
 
   <a-entity id="wp_s3_c1" class="wp s3 art" position="15.10 0 15.40"></a-entity>
   <a-entity id="wp_s3_c2" class="wp s3 art" position="13.30 0 15.80"></a-entity>
-  <a-entity id="wp_s3_c3" class="wp s3 art" position="12.20 0 16.30"></a-entity>
-  <a-entity id="wp_s3_c4" class="wp s3 art" position="14.50 0 14.10"></a-entity>
 
   <!-- Connector / social meet (shared) -->
   <a-entity id="wp_meet" class="wp meet" position="12.00 0 18.00"></a-entity>
   <a-entity id="wp_meet2" class="wp meet" position="10.80 0 18.20"></a-entity>
   <a-entity id="wp_meet3" class="wp meet" position="13.10 0 18.50"></a-entity>
-  <a-entity id="wp_meet4" class="wp meet" position="11.10 0 17.60"></a-entity>
 
   <!-- Connector stroll points -->
   <a-entity id="wp_conn1" class="wp conn art" position="12.40 0 19.80"></a-entity>
   <a-entity id="wp_conn2" class="wp conn art" position="11.30 0 20.20"></a-entity>
-  <a-entity id="wp_conn3" class="wp conn art" position="12.90 0 20.70"></a-entity>
-  <a-entity id="wp_conn4" class="wp conn art" position="10.60 0 19.50"></a-entity>
 
   <!-- Station 4 (art stops) -->
   <a-entity id="wp_s4_entry" class="wp s4 art" position="11.80 0 21.10"></a-entity>
@@ -4918,8 +4912,8 @@ AFRAME.registerComponent('pbr-carpet', {
 <a-entity id="characters">
 
   <!-- KATE (Station 3 visitor) -->
-  <a-entity id="CHAR_KATE" position="14.80 0 10.30" rotation="0 0 0"
-            npc-gallery-walker="name: KATE; speed: 0.85; arrive: 0.40; minTravel: 2.6; waypoints: #wp_s3_a1, #wp_s3_a2, #wp_s3_a3, #wp_s3_a4, #wp_s3_mid2, #wp_s3_mid; meetSelector: .wp.meet; meetChance: 0.18; meetCooldown: 35; artWaitMin: 14; artWaitMax: 32; meetWaitMin: 6; meetWaitMax: 12; modelYaw: 180; avoidDist: 0.80; sepDist: 1.15">
+  <a-entity id="CHAR_KATE" position="15.10 0 7.20" rotation="0 0 0"
+            npc-gallery-walker="name: KATE; speed: 0.85; waypoints: #wp_s3_a1, #wp_s3_a2, #wp_s3_mid, #wp_s3_mid2, #wp_s3_c1, #wp_s3_c2; meetSelector: #wp_meet, #wp_meet2, #wp_meet3; meetChance: 0.26; meetCooldown: 34; artWaitMin: 12; artWaitMax: 26; meetWaitMin: 6; meetWaitMax: 11; modelYaw: 180">
     <a-cylinder class="npc-placeholder" radius="0.28" height="1.65" position="0 0.825 0"
                 material="shader: standard; color: #ffffff; opacity: 0.18; transparent: true; roughness: 0.9; metalness: 0.0"></a-cylinder>
 
@@ -4933,8 +4927,8 @@ AFRAME.registerComponent('pbr-carpet', {
 </a-entity>
 
   <!-- FRANK (deep in Station 3) -->
-  <a-entity id="CHAR_FRANK" position="14.50 0 14.70" rotation="0 180 0"
-            npc-gallery-walker="name: FRANK; speed: 0.92; arrive: 0.40; minTravel: 2.4; waypoints: #wp_s3_c1, #wp_s3_c2, #wp_s3_c3, #wp_s3_c4, #wp_s3_mid, #wp_s3_mid2, #wp_conn1; meetSelector: .wp.meet; meetChance: 0.18; meetCooldown: 35; artWaitMin: 12; artWaitMax: 28; meetWaitMin: 5; meetWaitMax: 11; modelYaw: 180; avoidDist: 0.80; sepDist: 1.15">
+  <a-entity id="CHAR_FRANK" position="15.40 0 15.60" rotation="0 180 0"
+            npc-gallery-walker="name: FRANK; speed: 0.90; waypoints: #wp_s3_c1, #wp_s3_c2, #wp_s3_mid2, #wp_s3_mid, #wp_s3_a2; meetSelector: #wp_meet, #wp_meet2, #wp_meet3; meetChance: 0.22; meetCooldown: 36; artWaitMin: 10; artWaitMax: 24; meetWaitMin: 5; meetWaitMax: 10; modelYaw: 180">
     <a-cylinder class="npc-placeholder" radius="0.28" height="1.65" position="0 0.825 0"
                 material="shader: standard; color: #ffffff; opacity: 0.18; transparent: true; roughness: 0.9; metalness: 0.0"></a-cylinder>
 
@@ -4948,8 +4942,8 @@ AFRAME.registerComponent('pbr-carpet', {
 </a-entity>
 
   <!-- JAMES (Station 4 visitor) -->
-  <a-entity id="CHAR_JAMES" position="7.60 0 24.90" rotation="0 180 0"
-            npc-gallery-walker="name: JAMES; speed: 1.00; arrive: 0.40; minTravel: 2.8; waypoints: #wp_s4_a4, #wp_s4_back, #wp_s4_mid, #wp_s4_dc, #wp_s4_a2, #wp_s4_entry2, #wp_s4_entry; meetSelector: .wp.meet; meetChance: 0.20; meetCooldown: 30; artWaitMin: 12; artWaitMax: 26; meetWaitMin: 5; meetWaitMax: 10; modelYaw: 180; avoidDist: 0.80; sepDist: 1.20">
+  <a-entity id="CHAR_JAMES" position="6.40 0 25.90" rotation="0 180 0"
+            npc-gallery-walker="name: JAMES; speed: 1.00; waypoints: #wp_s4_a4, #wp_s4_back, #wp_s4_mid, #wp_s4_dc, #wp_s4_a2, #wp_s4_entry, #wp_s4_wall; meetSelector: #wp_meet, #wp_meet2, #wp_meet3; meetChance: 0.20; meetCooldown: 40; artWaitMin: 11; artWaitMax: 25; meetWaitMin: 6; meetWaitMax: 12; modelYaw: 180">
     <a-cylinder class="npc-placeholder" radius="0.28" height="1.65" position="0 0.825 0"
                 material="shader: standard; color: #ffffff; opacity: 0.18; transparent: true; roughness: 0.9; metalness: 0.0"></a-cylinder>
 
@@ -4963,8 +4957,8 @@ AFRAME.registerComponent('pbr-carpet', {
 </a-entity>
 
   <!-- LOUISE (connector between Station 3 and 4) -->
-  <a-entity id="CHAR_LOUISE" position="11.10 0 21.30" rotation="0 180 0"
-            npc-gallery-walker="name: LOUISE; speed: 0.90; arrive: 0.40; minTravel: 2.4; waypoints: #wp_conn1, #wp_conn2, #wp_conn3, #wp_conn4, #wp_s4_entry, #wp_s4_entry2, #wp_s4_wall, #wp_s4_a2; meetSelector: .wp.meet; meetChance: 0.22; meetCooldown: 28; artWaitMin: 15; artWaitMax: 34; meetWaitMin: 6; meetWaitMax: 12; modelYaw: 180; avoidDist: 0.80; sepDist: 1.15">
+  <a-entity id="CHAR_LOUISE" position="11.80 0 20.10" rotation="0 180 0"
+            npc-gallery-walker="name: LOUISE; speed: 0.88; waypoints: #wp_conn1, #wp_conn2, #wp_s3_mid, #wp_s4_entry, #wp_s4_a2, #wp_s4_dc; meetSelector: #wp_meet, #wp_meet2, #wp_meet3; meetChance: 0.30; meetCooldown: 28; artWaitMin: 12; artWaitMax: 28; meetWaitMin: 7; meetWaitMax: 13; modelYaw: 180">
     <a-cylinder class="npc-placeholder" radius="0.28" height="1.65" position="0 0.825 0"
                 material="shader: standard; color: #ffffff; opacity: 0.18; transparent: true; roughness: 0.9; metalness: 0.0"></a-cylinder>
 
