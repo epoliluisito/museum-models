@@ -1413,6 +1413,21 @@ this._setState('idle');
 </script>
 <!-- ===== END NPC SYSTEM ===== -->
 
+<script>
+  // Warn if opened via file:// (CORS will block GLBs, leaving placeholders).
+  (function(){
+    try {
+      if (location.protocol === 'file:') {
+        var w = document.createElement('div');
+        w.id='fileWarning';
+        w.style.cssText='position:fixed;left:14px;bottom:14px;max-width:520px;padding:10px 12px;background:rgba(0,0,0,.65);color:#fff;font:12px/1.4 ui-monospace,Menlo,monospace;z-index:99999;border-radius:8px;pointer-events:none;';
+        w.textContent='Opened via file://  → browsers block remote .glb loads (CORS). Run a local server (python -m http.server) or host on GitHub Pages.';
+        document.body.appendChild(w);
+      }
+    } catch(e){}
+  })();
+
+</script>
 </head>
 <body>
 
@@ -5026,11 +5041,11 @@ AFRAME.registerComponent('pbr-carpet', {
                 material="shader: standard; color: #ffffff; opacity: 0.08; transparent: true; roughness: 0.9; metalness: 0.0"></a-cylinder>
 
     <a-entity class="npc-idle" position="0 0 0" scale="1 1 1"
-              gltf-fallback='urls: ["https://epoliluisito.github.io/museum-models/characters/kate_idle.glb", "https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/kate_idle.glb", "https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/kate_idle.glb"]; statusKey: KATE idle'
+              gltf-fallback='urls: ["characters/kate_idle.glb", "https://epoliluisito.github.io/museum-models/characters/kate_idle.glb", "https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/kate_idle.glb"]; statusKey: KATE idle'
               auto-gltf-anim animation-mixer="clip: *; loop: repeat;"></a-entity>
 
     <a-entity class="npc-walk" position="0 0 0" scale="1 1 1" visible="false"
-              gltf-fallback='urls: ["https://epoliluisito.github.io/museum-models/characters/kate_walk.glb", "https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/kate_walk.glb", "https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/kate_walk.glb"]; statusKey: KATE walk'
+              gltf-fallback='urls: ["characters/kate_walk.glb", "https://epoliluisito.github.io/museum-models/characters/kate_walk.glb", "https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/kate_walk.glb"]; statusKey: KATE walk'
               auto-gltf-anim animation-mixer="clip: *; loop: repeat;"></a-entity>
 </a-entity>
 
@@ -5041,11 +5056,11 @@ AFRAME.registerComponent('pbr-carpet', {
                 material="shader: standard; color: #ffffff; opacity: 0.08; transparent: true; roughness: 0.9; metalness: 0.0"></a-cylinder>
 
     <a-entity class="npc-idle" position="0 0 0" scale="1 1 1"
-              gltf-fallback='urls: ["https://epoliluisito.github.io/museum-models/characters/Frank_Idle.glb", "https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/Frank_Idle.glb", "https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/Frank_Idle.glb"]; statusKey: FRANK idle'
+              gltf-fallback='urls: ["characters/Frank_Idle.glb", "https://epoliluisito.github.io/museum-models/characters/Frank_Idle.glb", "https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/Frank_Idle.glb"]; statusKey: FRANK idle'
               auto-gltf-anim animation-mixer="clip: *; loop: repeat;"></a-entity>
 
     <a-entity class="npc-walk" position="0 0 0" scale="1 1 1" visible="false"
-              gltf-fallback='urls: ["https://epoliluisito.github.io/museum-models/characters/frank_walk.glb", "https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/frank_walk.glb", "https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/frank_walk.glb"]; statusKey: FRANK walk'
+              gltf-fallback='urls: ["characters/frank_walk.glb", "https://epoliluisito.github.io/museum-models/characters/frank_walk.glb", "https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/frank_walk.glb"]; statusKey: FRANK walk'
               auto-gltf-anim animation-mixer="clip: *; loop: repeat;"></a-entity>
 </a-entity>
 
@@ -5056,11 +5071,11 @@ AFRAME.registerComponent('pbr-carpet', {
                 material="shader: standard; color: #ffffff; opacity: 0.08; transparent: true; roughness: 0.9; metalness: 0.0"></a-cylinder>
 
     <a-entity class="npc-idle" position="0 0 0" scale="1 1 1"
-              gltf-fallback='urls: ["https://epoliluisito.github.io/museum-models/characters/James_idle.glb", "https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/James_idle.glb", "https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/James_idle.glb"]; statusKey: JAMES idle'
+              gltf-fallback='urls: ["characters/James_idle.glb", "https://epoliluisito.github.io/museum-models/characters/James_idle.glb", "https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/James_idle.glb"]; statusKey: JAMES idle'
               auto-gltf-anim animation-mixer="clip: *; loop: repeat;"></a-entity>
 
     <a-entity class="npc-walk" position="0 0 0" scale="1 1 1" visible="false"
-              gltf-fallback='urls: ["https://epoliluisito.github.io/museum-models/characters/James_walk.glb", "https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/James_walk.glb", "https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/James_walk.glb"]; statusKey: JAMES walk'
+              gltf-fallback='urls: ["characters/James_walk.glb", "https://epoliluisito.github.io/museum-models/characters/James_walk.glb", "https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/James_walk.glb"]; statusKey: JAMES walk'
               auto-gltf-anim animation-mixer="clip: *; loop: repeat;"></a-entity>
 </a-entity>
 
@@ -5071,11 +5086,11 @@ AFRAME.registerComponent('pbr-carpet', {
                 material="shader: standard; color: #ffffff; opacity: 0.08; transparent: true; roughness: 0.9; metalness: 0.0"></a-cylinder>
 
     <a-entity class="npc-idle" position="0 0 0" scale="1 1 1"
-              gltf-fallback='urls: ["https://epoliluisito.github.io/museum-models/characters/louise_idle.glb", "https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/louise_idle.glb", "https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/louise_idle.glb"]; statusKey: LOUISE idle'
+              gltf-fallback='urls: ["characters/louise_idle.glb", "https://epoliluisito.github.io/museum-models/characters/louise_idle.glb", "https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/louise_idle.glb"]; statusKey: LOUISE idle'
               auto-gltf-anim animation-mixer="clip: *; loop: repeat;"></a-entity>
 
     <a-entity class="npc-walk" position="0 0 0" scale="1 1 1" visible="false"
-              gltf-fallback='urls: ["https://epoliluisito.github.io/museum-models/characters/louise_walk.glb", "https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/louise_walk.glb", "https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/louise_walk.glb"]; statusKey: LOUISE walk'
+              gltf-fallback='urls: ["characters/louise_walk.glb", "https://epoliluisito.github.io/museum-models/characters/louise_walk.glb", "https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/louise_walk.glb"]; statusKey: LOUISE walk'
               auto-gltf-anim animation-mixer="clip: *; loop: repeat;"></a-entity>
 </a-entity>
 
