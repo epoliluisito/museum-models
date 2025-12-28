@@ -958,10 +958,21 @@ AFRAME.registerComponent('mixamo-mat-fix', {
             m.alphaTest = 0.0;
           }
 
-          // Reduce plastic look
-          if ('roughness' in m) m.roughness = Math.max(0.97, (m.roughness ?? 0.97));
-          if ('metalness' in m) m.metalness = Math.min(0.02, (m.metalness ?? 0.0));
-          if ('envMapIntensity' in m) m.envMapIntensity = Math.min(0.08, (m.envMapIntensity ?? 0.0));
+          // Reduce plastic look (works across Standard/Physical/Phong)
+          if ('metalness' in m) m.metalness = 0.0;
+          if ('roughness' in m) m.roughness = Math.max(0.96, (m.roughness ?? 0.96));
+          if ('envMapIntensity' in m) m.envMapIntensity = Math.min(0.05, (m.envMapIntensity ?? 0.0));
+
+          // MeshPhysicalMaterial extras (some Mixamo exports use Physical)
+          if ('clearcoat' in m) m.clearcoat = 0.0;
+          if ('clearcoatRoughness' in m) m.clearcoatRoughness = 1.0;
+          if ('sheen' in m && m.sheen) { try { m.sheen.setRGB(0,0,0); } catch(e){} }
+          if ('sheenRoughness' in m) m.sheenRoughness = 1.0;
+          if ('transmission' in m) m.transmission = 0.0;
+
+          // Phong-style highlights
+          if ('shininess' in m) m.shininess = Math.min((m.shininess ?? 0), 6);
+          if (m.specular) { try { m.specular.setRGB(0,0,0); } catch(e){} }
 
           // Slight desaturation/darken of material tint (won't affect baked textures much, but helps)
           if (m.color) {
@@ -987,6 +998,12 @@ AFRAME.registerComponent('mixamo-mat-fix', {
   // Waypoints are passed as a selector string (e.g. ".wpKate").
   const NPC_REG = {};
   window.__npcRegistry = NPC_REG;
+
+  // Waypoint claim system: prevents two NPCs selecting / occupying the exact same stop,
+  // which is the main cause of "staring contests" and deadlocks at meet points.
+  const WP_CLAIMS = window.__wpClaims || new Map();
+  window.__wpClaims = WP_CLAIMS;
+  function __nowMs(){ return (window.performance && performance.now) ? performance.now() : Date.now(); }
 
   AFRAME.registerComponent('npc-gallery-walker', {
     schema: {
@@ -1020,6 +1037,12 @@ AFRAME.registerComponent('mixamo-mat-fix', {
       sepDist: { type: 'number', default: 1.25 },
       sepStrength: { type: 'number', default: 1.10 },
 
+      // Anti-deadlock
+      crowdDist: { type: 'number', default: 1.10 },     // don't target a stop if another NPC is already there
+      meetExclusive: { type: 'boolean', default: true },// only one NPC may claim a meet point at a time
+      npcBlockDist: { type: 'number', default: 0.95 },  // treat NPCs as obstacles when walking
+      stuckAfter: { type: 'number', default: 1.75 },    // seconds of near-zero movement before repath
+
       modelYaw: { type: 'number', default: 0 }        // extra yaw to align Mixamo forward
     },
 
@@ -1047,6 +1070,9 @@ AFRAME.registerComponent('mixamo-mat-fix', {
       this._meetCd = this.data.meetCooldown * (0.35 + Math.random() * 0.65); // desync
 
       this._blockedT = 0;
+      this._stuckT = 0;
+      this._lastPos = new THREE.Vector3().copy(this.el.object3D.position);
+      this._claimKey = null;
 
       // Collision cache
       this._raycaster = new THREE.Raycaster();
@@ -1093,6 +1119,7 @@ AFRAME.registerComponent('mixamo-mat-fix', {
         this._socialLook(dt);
 
         if (this._waitT <= 0){
+          this._releaseClaim();
           this._pickNextTarget();
           this._setState('walk');
         }
@@ -1123,6 +1150,9 @@ AFRAME.registerComponent('mixamo-mat-fix', {
 
         if (kind === 'meet') this._meetCd = this.data.meetCooldown;
 
+        // Extend claim while we linger here (prevents others piling into the same spot).
+        this._extendClaim((this._waitT * 1000) + 4000);
+
         // Face the thing we arrived at.
         if (dist > 0.001){
           const desiredYaw = Math.atan2(dx, dz) * 180 / Math.PI;
@@ -1149,7 +1179,7 @@ AFRAME.registerComponent('mixamo-mat-fix', {
       this.el.setAttribute('rotation', {x: 0, y: newYaw, z: 0});
 
       // Obstacle avoidance: forward raycast against cached collider meshes.
-      const blocked = this._isBlocked(pos, nx, nz);
+      const blocked = this._isBlocked(pos, nx, nz) || this._npcAheadBlocked(pos, nx, nz);
 
       const step = this.data.speed * dt;
 
@@ -1162,6 +1192,11 @@ AFRAME.registerComponent('mixamo-mat-fix', {
         pos.z += sidestep.z * step * 0.75;
 
         // If we're blocked for long enough, repick a target.
+        // Stuck detection (including NPC deadlocks)
+        if (this._movedLessThan(pos, this._lastPos, 0.01)) this._stuckT += dt; else this._stuckT = 0;
+        this._lastPos.copy(pos);
+        if (this._stuckT >= this.data.stuckAfter){ this._stuckT = 0; this._pickNextTarget(true); return; }
+
         if (this._blockedT >= this.data.repathAfter){
           this._blockedT = 0;
           this._pickNextTarget(true);
@@ -1174,6 +1209,11 @@ AFRAME.registerComponent('mixamo-mat-fix', {
       // Move forward.
       pos.x += nx * step;
       pos.z += nz * step;
+
+      // Stuck detection: if we aren't actually moving (due to NPC separation stalemate), repath.
+      if (this._movedLessThan(pos, this._lastPos, 0.01)) this._stuckT += dt; else this._stuckT = 0;
+      this._lastPos.copy(pos);
+      if (this._stuckT >= this.data.stuckAfter){ this._stuckT = 0; this._pickNextTarget(true); }
     },
 
     _refreshWaypoints: function(){
@@ -1200,12 +1240,15 @@ AFRAME.registerComponent('mixamo-mat-fix', {
           const cand = this._wpsMeet[(Math.random() * this._wpsMeet.length) | 0];
           if (!cand) continue;
           if (current && cand === current) continue;
+          if (this._isClaimed(cand)) continue;
+          if (this.data.meetExclusive && this._isCrowdedWaypoint(cand, 'meet')) continue;
           const p = cand.object3D.position;
           const d = Math.hypot(p.x - myPos.x, p.z - myPos.z);
           if (d < minD) continue;
           chosen = cand; break;
         }
         this._target = chosen || this._wpsMeet[0];
+        this._claimTarget(this._target, 25000);
         return;
       }
 
@@ -1218,6 +1261,8 @@ AFRAME.registerComponent('mixamo-mat-fix', {
           const cand = pool[(Math.random() * pool.length) | 0];
           if (!cand) continue;
           if (current && cand === current) continue;
+          if (this._isClaimed(cand)) continue;
+          if (this._isCrowdedWaypoint(cand, this._wpKind(cand))) continue;
           const p = cand.object3D.position;
           const d = Math.hypot(p.x - myPos.x, p.z - myPos.z);
           if (d < minD) continue;
@@ -1225,11 +1270,13 @@ AFRAME.registerComponent('mixamo-mat-fix', {
         }
         if (!chosen && forceDifferent && hasMeet) chosen = this._wpsMeet[(Math.random() * this._wpsMeet.length) | 0];
         this._target = chosen || this._wpsArt[0];
+        this._claimTarget(this._target, 25000);
         return;
       }
 
       // Fallback: only meet points exist.
       this._target = this._wpsMeet[0];
+      this._claimTarget(this._target, 25000);
     },
 
     _setState: function(s){
@@ -1399,6 +1446,94 @@ AFRAME.registerComponent('mixamo-mat-fix', {
       this._colliderMeshes = list;
     },
 
+
+    _wpKey: function(wpEl){
+      if (!wpEl) return null;
+      return (wpEl.id && wpEl.id.length) ? wpEl.id : (wpEl.object3D && wpEl.object3D.uuid) ? wpEl.object3D.uuid : null;
+    },
+
+    _releaseClaim: function(){
+      if (!this._claimKey) return;
+      const c = WP_CLAIMS.get(this._claimKey);
+      if (c && c.name === this.name) WP_CLAIMS.delete(this._claimKey);
+      this._claimKey = null;
+    },
+
+    _claimTarget: function(wpEl, ms){
+      if (!wpEl) return;
+      const key = this._wpKey(wpEl);
+      if (!key) return;
+
+      // Drop previous claim if switching targets.
+      if (this._claimKey && this._claimKey !== key) this._releaseClaim();
+
+      const until = __nowMs() + (ms || 20000);
+      WP_CLAIMS.set(key, {name: this.name, until});
+      this._claimKey = key;
+    },
+
+    _extendClaim: function(ms){
+      if (!this._claimKey) return;
+      const c = WP_CLAIMS.get(this._claimKey);
+      if (!c || c.name !== this.name) return;
+      c.until = Math.max(c.until, __nowMs() + (ms || 0));
+      WP_CLAIMS.set(this._claimKey, c);
+    },
+
+    _isClaimed: function(wpEl){
+      const key = this._wpKey(wpEl);
+      if (!key) return false;
+      const c = WP_CLAIMS.get(key);
+      if (!c) return false;
+      if (c.until < __nowMs()){
+        WP_CLAIMS.delete(key);
+        return false;
+      }
+      return c.name !== this.name;
+    },
+
+    _isCrowdedWaypoint: function(wpEl, kind){
+      // Avoid choosing a stop that already has another NPC near it.
+      if (!wpEl) return false;
+      const p = wpEl.object3D.position;
+      const base = this.data.crowdDist;
+      const crowdR = (kind === 'meet') ? Math.max(1.45, base * 1.35) : base;
+
+      for (const k in NPC_REG){
+        const other = NPC_REG[k];
+        if (!other || other === this.el) continue;
+        const op = other.object3D.position;
+        const d = Math.hypot(op.x - p.x, op.z - p.z);
+        if (d < crowdR) return true;
+      }
+      return false;
+    },
+
+    _npcAheadBlocked: function(pos, nx, nz){
+      // Treat nearby NPCs as soft obstacles so two characters don't deadlock head-on.
+      const blockR = this.data.npcBlockDist;
+      const dirx = nx, dirz = nz;
+      for (const k in NPC_REG){
+        const other = NPC_REG[k];
+        if (!other || other === this.el) continue;
+        const op = other.object3D.position;
+        const dx = op.x - pos.x;
+        const dz = op.z - pos.z;
+        const d = Math.hypot(dx, dz);
+        if (d < 0.001 || d > blockR) continue;
+
+        // Only if the other NPC is broadly in front of us.
+        const dot = (dx / d) * dirx + (dz / d) * dirz;
+        if (dot > 0.25) return true;
+      }
+      return false;
+    },
+
+    _movedLessThan: function(pos, lastPos, eps){
+      const dx = pos.x - lastPos.x;
+      const dz = pos.z - lastPos.z;
+      return (dx*dx + dz*dz) < (eps*eps);
+    },
     _rand: function(a,b){ return a + Math.random() * (b-a); },
 
     _lerpAngle: function(a,b,t){
