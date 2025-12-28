@@ -894,14 +894,28 @@ AFRAME.registerComponent('hide-placeholder-when-ready', {
     const el = this.el;
     const ph = el.querySelector('.npc-placeholder');
     if (!ph) return;
-    const models = el.querySelectorAll('.npc-model');
+    const models = Array.from(el.querySelectorAll('.npc-model'));
     if (!models.length) return;
+
     const hide = () => { if (ph.getAttribute('visible') !== false) ph.setAttribute('visible', false); };
-    models.forEach(m => {
-      m.addEventListener('model-loaded', hide, { once: true });
-    });
+
+    // 1) Normal path: hide when any model fires model-loaded.
+    models.forEach(m => m.addEventListener('model-loaded', hide, { once: true }));
+
+    // 2) Race-condition fix: if models were already loaded before we attached listeners,
+    // poll briefly for a mesh and hide.
+    let tries = 0;
+    const tick = () => {
+      tries++;
+      for (const m of models){
+        if (m.getObject3D && m.getObject3D('mesh')) { hide(); return; }
+      }
+      if (tries < 120) requestAnimationFrame(tick); // ~2 seconds @ 60fps
+    };
+    requestAnimationFrame(tick);
   }
 });
+
 
 // --- Mixamo material fixer: kills "see-through", reduces gloss/plastic, and avoids backface weirdness
 AFRAME.registerComponent('mixamo-mat-fix', {
@@ -945,9 +959,9 @@ AFRAME.registerComponent('mixamo-mat-fix', {
           }
 
           // Reduce plastic look
-          if ('roughness' in m) m.roughness = Math.max(0.85, m.roughness ?? 0.85);
-          if ('metalness' in m) m.metalness = Math.min(0.05, m.metalness ?? 0.0);
-          if ('envMapIntensity' in m) m.envMapIntensity = Math.min(0.25, m.envMapIntensity ?? 0.0);
+          if ('roughness' in m) m.roughness = Math.max(0.97, (m.roughness ?? 0.97));
+          if ('metalness' in m) m.metalness = Math.min(0.02, (m.metalness ?? 0.0));
+          if ('envMapIntensity' in m) m.envMapIntensity = Math.min(0.08, (m.envMapIntensity ?? 0.0));
 
           // Slight desaturation/darken of material tint (won't affect baked textures much, but helps)
           if (m.color) {
@@ -959,6 +973,7 @@ AFRAME.registerComponent('mixamo-mat-fix', {
             m.color.setHSL(hsl.h, hsl.s, hsl.l);
           }
 
+          if (m.emissive) m.emissive.multiplyScalar(0.45);
           m.depthWrite = true;
           m.needsUpdate = true;
         });
@@ -4990,121 +5005,72 @@ AFRAME.registerComponent('pbr-carpet', {
   <!-- KATE (moved away from Station 3; low meet chance) -->
   <a-entity id="CHAR_KATE" position="8.80 0 16.00" rotation="0 180 0"
             hide-placeholder-when-ready
-            npc-gallery-walker="name: KATE; speed: 0.85; waypoints: #wp_c1, #wp_c2, #wp_s4_entry, #wp_s4_mid, #wp_meet2; meetSelector: .meet; meetChance: 0.02; meetCooldown: 45; artWaitMin: 10; artWaitMax: 22; meetWaitMin: 8; meetWaitMax: 14; modelYaw: 0">
+            npc-gallery-walker="name: KATE; speed: 0.85; waypoints: #wp_c1, #wp_c2, #wp_s4_entry, #wp_s4_mid, #wp_meet2; meetSelector: .meet; meetChance: 0.02; meetCooldown: 45; artWaitMin: 1.2; artWaitMax: 3.2; meetWaitMin: 1.0; meetWaitMax: 2.4; modelYaw: 0">
     <a-cylinder class="npc-placeholder" radius="0.28" height="1.65" position="0 0.825 0"
-                material="shader: standard; color: #ffffff; opacity: 0.18; transparent: true; roughness: 0.95; metalness: 0.0"></a-cylinder>
+                material="shader: standard; color: #ffffff; opacity: 0.10; transparent: true; roughness: 0.95; metalness: 0.0"></a-cylinder>
 
     <a-entity class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/kate_idle.glb"
-              mixamo-mat-fix="desat: 0.20; darken: 0.06"
+              mixamo-mat-fix="desat: 0.55; darken: 0.18"
               animation-mixer="clip: *; loop: repeat;"></a-entity>
 
     <a-entity class="npc-walk npc-model" visible="false" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/kate_walk.glb"
-              mixamo-mat-fix="desat: 0.20; darken: 0.06"
+              mixamo-mat-fix="desat: 0.55; darken: 0.18"
               animation-mixer="clip: *; loop: repeat;"></a-entity>
   </a-entity>
 
   <!-- FRANK (keeps Station 3, but has an exit waypoint so he doesn't get trapped) -->
   <a-entity id="CHAR_FRANK" position="15.10 0 15.40" rotation="0 180 0"
             hide-placeholder-when-ready
-            npc-gallery-walker="name: FRANK; speed: 0.90; waypoints: #wp_s3_c1, #wp_s3_c2, #wp_s3_mid2, #wp_s3_exit, #wp_meet3; meetSelector: .meet; meetChance: 0.03; meetCooldown: 55; artWaitMin: 9; artWaitMax: 20; meetWaitMin: 8; meetWaitMax: 14; modelYaw: 0">
+            npc-gallery-walker="name: FRANK; speed: 0.90; waypoints: #wp_s3_c1, #wp_s3_c2, #wp_s3_mid2, #wp_s3_exit, #wp_meet3; meetSelector: .meet; meetChance: 0.03; meetCooldown: 55; artWaitMin: 1.2; artWaitMax: 3.2; meetWaitMin: 1.0; meetWaitMax: 2.4; modelYaw: 0">
     <a-cylinder class="npc-placeholder" radius="0.28" height="1.65" position="0 0.825 0"
-                material="shader: standard; color: #ffffff; opacity: 0.18; transparent: true; roughness: 0.95; metalness: 0.0"></a-cylinder>
+                material="shader: standard; color: #ffffff; opacity: 0.10; transparent: true; roughness: 0.95; metalness: 0.0"></a-cylinder>
 
     <a-entity class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/Frank_Idle.glb"
-              mixamo-mat-fix="desat: 0.22; darken: 0.07"
+              mixamo-mat-fix="desat: 0.55; darken: 0.18"
               animation-mixer="clip: *; loop: repeat;"></a-entity>
 
     <a-entity class="npc-walk npc-model" visible="false" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/frank_walk.glb"
-              mixamo-mat-fix="desat: 0.22; darken: 0.07"
+              mixamo-mat-fix="desat: 0.55; darken: 0.18"
               animation-mixer="clip: *; loop: repeat;"></a-entity>
   </a-entity>
 
   <!-- LOUISE (connector + Station 4; avoids Station 3) -->
   <a-entity id="CHAR_LOUISE" position="12.20 0 19.60" rotation="0 210 0"
             hide-placeholder-when-ready
-            npc-gallery-walker="name: LOUISE; speed: 0.88; waypoints: #wp_conn1, #wp_conn2, #wp_meet2, #wp_s4_entry, #wp_s4_dc, #wp_c1; meetSelector: .meet; meetChance: 0.03; meetCooldown: 55; artWaitMin: 11; artWaitMax: 24; meetWaitMin: 9; meetWaitMax: 15; modelYaw: 0">
+            npc-gallery-walker="name: LOUISE; speed: 0.88; waypoints: #wp_conn1, #wp_conn2, #wp_meet2, #wp_s4_entry, #wp_s4_dc, #wp_c1; meetSelector: .meet; meetChance: 0.03; meetCooldown: 55; artWaitMin: 1.2; artWaitMax: 3.2; meetWaitMin: 1.0; meetWaitMax: 2.4; modelYaw: 0">
     <a-cylinder class="npc-placeholder" radius="0.28" height="1.65" position="0 0.825 0"
-                material="shader: standard; color: #ffffff; opacity: 0.18; transparent: true; roughness: 0.95; metalness: 0.0"></a-cylinder>
+                material="shader: standard; color: #ffffff; opacity: 0.10; transparent: true; roughness: 0.95; metalness: 0.0"></a-cylinder>
 
     <a-entity class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/louise_idle.glb"
-              mixamo-mat-fix="desat: 0.20; darken: 0.06"
+              mixamo-mat-fix="desat: 0.55; darken: 0.18"
               animation-mixer="clip: *; loop: repeat;"></a-entity>
 
     <a-entity class="npc-walk npc-model" visible="false" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/louise_walk.glb"
-              mixamo-mat-fix="desat: 0.20; darken: 0.06"
+              mixamo-mat-fix="desat: 0.55; darken: 0.18"
               animation-mixer="clip: *; loop: repeat;"></a-entity>
   </a-entity>
 
   <!-- JAMES (Station 4 loop; material fixed so no inside/backface view) -->
   <a-entity id="CHAR_JAMES" position="8.20 0 24.00" rotation="0 90 0"
             hide-placeholder-when-ready
-            npc-gallery-walker="name: JAMES; speed: 1.00; waypoints: #wp_s4_mid, #wp_s4_wall, #wp_s4_a2, #wp_s4_a4, #wp_s4_back; meetSelector: .meet; meetChance: 0.02; meetCooldown: 60; artWaitMin: 10; artWaitMax: 22; meetWaitMin: 9; meetWaitMax: 15; modelYaw: 0">
+            npc-gallery-walker="name: JAMES; speed: 1.00; waypoints: #wp_s4_mid, #wp_s4_wall, #wp_s4_a2, #wp_s4_a4, #wp_s4_back; meetSelector: .meet; meetChance: 0.02; meetCooldown: 60; artWaitMin: 1.2; artWaitMax: 3.2; meetWaitMin: 1.0; meetWaitMax: 2.4; modelYaw: 0">
     <a-cylinder class="npc-placeholder" radius="0.28" height="1.65" position="0 0.825 0"
-                material="shader: standard; color: #ffffff; opacity: 0.18; transparent: true; roughness: 0.95; metalness: 0.0"></a-cylinder>
+                material="shader: standard; color: #ffffff; opacity: 0.10; transparent: true; roughness: 0.95; metalness: 0.0"></a-cylinder>
 
     <a-entity class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/James_idle.glb"
-              mixamo-mat-fix="desat: 0.22; darken: 0.07"
+              mixamo-mat-fix="desat: 0.55; darken: 0.18"
               animation-mixer="clip: *; loop: repeat;"></a-entity>
 
     <a-entity class="npc-walk npc-model" visible="false" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/James_walk.glb"
-              mixamo-mat-fix="desat: 0.22; darken: 0.07"
+              mixamo-mat-fix="desat: 0.55; darken: 0.18"
               animation-mixer="clip: *; loop: repeat;"></a-entity>
   </a-entity>
 
 </a-entity>
 
-<a-entity class="npc-walk" position="0 0 0" scale="1 1 1" visible="false"
-              gltf-fallback='urls: ["https://epoliluisito.github.io/museum-models/characters/kate_walk.glb", "https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/kate_walk.glb", "https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/kate_walk.glb"]; statusKey: KATE walk'
-              animation-mixer="clip: *; loop: repeat;"></a-entity>
-</a-entity>
-
-  <!-- FRANK (deep in Station 3) -->
-  <a-entity id="CHAR_FRANK" position="15.40 0 15.60" rotation="0 180 0"
-            npc-gallery-walker="name: FRANK; speed: 0.90; waypoints: #wp_s3_c1, #wp_s3_c2, #wp_s3_mid2, #wp_s3_mid, #wp_s3_a2; meetSelector: #wp_meet, #wp_meet2, #wp_meet3; meetChance: 0.22; meetCooldown: 36; artWaitMin: 10; artWaitMax: 24; meetWaitMin: 5; meetWaitMax: 10; modelYaw: 0">
-    <a-cylinder class="npc-placeholder" radius="0.28" height="1.65" position="0 0.825 0"
-                material="shader: standard; color: #ffffff; opacity: 0.18; transparent: true; roughness: 0.9; metalness: 0.0"></a-cylinder>
-
-    <a-entity class="npc-idle" position="0 0 0" scale="1 1 1"
-              gltf-fallback='urls: ["https://epoliluisito.github.io/museum-models/characters/Frank_Idle.glb", "https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/Frank_Idle.glb", "https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/Frank_Idle.glb"]; statusKey: FRANK idle'
-              animation-mixer="clip: *; loop: repeat;"></a-entity>
-
-    <a-entity class="npc-walk" position="0 0 0" scale="1 1 1" visible="false"
-              gltf-fallback='urls: ["https://epoliluisito.github.io/museum-models/characters/frank_walk.glb", "https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/frank_walk.glb", "https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/frank_walk.glb"]; statusKey: FRANK walk'
-              animation-mixer="clip: *; loop: repeat;"></a-entity>
-</a-entity>
-
-  <!-- JAMES (Station 4 visitor) -->
-  <a-entity id="CHAR_JAMES" position="6.40 0 25.90" rotation="0 180 0"
-            npc-gallery-walker="name: JAMES; speed: 1.00; waypoints: #wp_s4_a4, #wp_s4_back, #wp_s4_mid, #wp_s4_dc, #wp_s4_a2, #wp_s4_entry, #wp_s4_wall; meetSelector: #wp_meet, #wp_meet2, #wp_meet3; meetChance: 0.20; meetCooldown: 40; artWaitMin: 11; artWaitMax: 25; meetWaitMin: 6; meetWaitMax: 12; modelYaw: 0">
-    <a-cylinder class="npc-placeholder" radius="0.28" height="1.65" position="0 0.825 0"
-                material="shader: standard; color: #ffffff; opacity: 0.18; transparent: true; roughness: 0.9; metalness: 0.0"></a-cylinder>
-
-    <a-entity class="npc-idle" position="0 0 0" scale="1 1 1"
-              gltf-fallback='urls: ["https://epoliluisito.github.io/museum-models/characters/James_idle.glb", "https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/James_idle.glb", "https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/James_idle.glb"]; statusKey: JAMES idle'
-              animation-mixer="clip: *; loop: repeat;"></a-entity>
-
-    <a-entity class="npc-walk" position="0 0 0" scale="1 1 1" visible="false"
-              gltf-fallback='urls: ["https://epoliluisito.github.io/museum-models/characters/James_walk.glb", "https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/James_walk.glb", "https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/James_walk.glb"]; statusKey: JAMES walk'
-              animation-mixer="clip: *; loop: repeat;"></a-entity>
-</a-entity>
-
-  <!-- LOUISE (connector between Station 3 and 4) -->
-  <a-entity id="CHAR_LOUISE" position="11.80 0 20.10" rotation="0 180 0"
-            npc-gallery-walker="name: LOUISE; speed: 0.88; waypoints: #wp_conn1, #wp_conn2, #wp_s3_mid, #wp_s4_entry, #wp_s4_a2, #wp_s4_dc; meetSelector: #wp_meet, #wp_meet2, #wp_meet3; meetChance: 0.30; meetCooldown: 28; artWaitMin: 12; artWaitMax: 28; meetWaitMin: 7; meetWaitMax: 13; modelYaw: 0">
-    <a-cylinder class="npc-placeholder" radius="0.28" height="1.65" position="0 0.825 0"
-                material="shader: standard; color: #ffffff; opacity: 0.18; transparent: true; roughness: 0.9; metalness: 0.0"></a-cylinder>
-
-    <a-entity class="npc-idle" position="0 0 0" scale="1 1 1"
-              gltf-fallback='urls: ["https://epoliluisito.github.io/museum-models/characters/louise_idle.glb", "https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/louise_idle.glb", "https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/louise_idle.glb"]; statusKey: LOUISE idle'
-              animation-mixer="clip: *; loop: repeat;"></a-entity>
-
-    <a-entity class="npc-walk" position="0 0 0" scale="1 1 1" visible="false"
-              gltf-fallback='urls: ["https://epoliluisito.github.io/museum-models/characters/louise_walk.glb", "https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/louise_walk.glb", "https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/louise_walk.glb"]; statusKey: LOUISE walk'
-              animation-mixer="clip: *; loop: repeat;"></a-entity>
-</a-entity>
-
-</a-entity>
 <!-- ===== END CHARACTERS ===== -->
+
+
 
 </a-scene>
 <script>
