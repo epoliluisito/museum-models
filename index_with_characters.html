@@ -802,180 +802,260 @@ AFRAME.registerComponent('light-beam', {
       // If placeholder exists but is empty, populate it.
       if (!el.querySelector('.title')) {
         el.innerHTML = '<div class="title">NPC LOAD STATUS</div>' +
-          HUD_KEYS.map(k => '<div class="row"><div class="k">'+k+':</div><div class="v" data-k="'+k+'">loading…</div></div>').join('') +
-          '<div class="row" style="margin-top:6px; opacity:.65;"><div class="v">Tip: open DevTools Console to see glTF loader errors.</div></div>';
+          HUD_KEYS.map(k => `<div class="line" data-key="${k}">${k.replace(' idle','').replace(' walk','')}${k.endsWith('idle')? ' idle:' : ' walk:'} <span class="v">loading...</span></div>`).join('');
       }
       return el;
     }
     el = document.createElement('div');
     el.id = 'npcHud';
-    el.innerHTML = '<div class="title">NPC LOAD STATUS</div>' +
-      HUD_KEYS.map(k => '<div class="row"><div class="k">'+k+':</div><div class="v" data-k="'+k+'">loading…</div></div>').join('') +
-      '<div class="row" style="margin-top:6px; opacity:.65;"><div class="v">Tip: open DevTools Console to see glTF loader errors.</div></div>';
+    el.style.cssText = 'position:fixed;left:14px;bottom:14px;z-index:99999;padding:10px 12px;background:rgba(0,0,0,.55);color:#fff;font-family:monospace;font-size:12px;line-height:1.35;border-radius:8px;max-width:360px;pointer-events:none;';
+    el.innerHTML = '<div class="title" style="font-weight:700;margin-bottom:6px;">NPC LOAD STATUS</div>' +
+      HUD_KEYS.map(k => `<div class="line" data-key="${k}">${k.replace(' idle','').replace(' walk','')}${k.endsWith('idle')? ' idle:' : ' walk:'} <span class="v">loading...</span></div>`).join('') +
+      '<div style="opacity:.65;margin-top:6px;">Tip: open DevTools Console if something fails.</div>';
     document.body.appendChild(el);
     return el;
   }
 
-  function setHud(key, text, cls){
-    const el = ensureHud();
-    const v = el.querySelector('[data-k="'+key+'"]');
-    if (!v) return;
-    v.classList.remove('ok','bad','warn');
-    if (cls) v.classList.add(cls);
-    v.textContent = text;
+  function setHud(key, value){
+    const hud = ensureHud();
+    const row = hud.querySelector(`.line[data-key="${key}"] .v`);
+    if (row) row.textContent = value;
   }
 
-  window.__npcHud = { set: setHud, ensure: ensureHud };
+  // --- NPC registry (for separation + social look) ----------------------
+  const NPC_REG = {};
+  function getNPCList(){
+    return Object.values(NPC_REG).filter(Boolean);
+  }
 
-  // --- glTF fallback loader ---------------------------------------------
-  // Usage:
-  // gltf-fallback="urls: [...]; statusKey: KATE idle"
+  // --- Collidables auto-tagging -----------------------------------------
+  function autoTagCollidables(){
+    // We tag likely-structural elements as .collidable so NPCs don't walk through them.
+    // Heuristics: ids containing wall/panel/pillar/column/door/frame/divider/mount.
+    const candidates = Array.from(document.querySelectorAll('[id]'));
+    const isBad = (id)=> (id.includes('floor') || id.includes('ceiling') || id.includes('sky') || id.includes('fog') || id.includes('light'));
+    const isGood = (id)=> (
+      id.includes('wall') || id.includes('panel') || id.includes('pillar') || id.includes('column') ||
+      id.includes('door') || id.includes('frame') || id.includes('divider') || id.includes('mount')
+    );
+
+    let count = 0;
+    candidates.forEach(el=>{
+      if (el.closest('#npc-waypoints') || el.closest('#characters')) return;
+      const id = (el.id || '').toLowerCase();
+      if (!id) return;
+      if (isBad(id)) return;
+      if (!isGood(id)) return;
+      el.classList.add('collidable');
+      count++;
+    });
+    // Expose for debugging.
+    window.__npcCollidablesTagged = count;
+    console.log('[NPC] autoTagCollidables:', count, 'elements tagged as .collidable');
+  }
+
+  window.addEventListener('load', ()=>{
+    const scene = document.querySelector('a-scene');
+    if (!scene) return;
+    if (scene.hasLoaded) autoTagCollidables();
+    else scene.addEventListener('loaded', autoTagCollidables);
+  });
+
+  // --- GLTF fallback loader ---------------------------------------------
+  // Use as: gltf-fallback='urls: ["...","..."]; statusKey: "KATE idle"'
   AFRAME.registerComponent('gltf-fallback', {
     schema: {
-      urls: { type: 'string', default: '[]' },    // JSON array string
-      statusKey: { type: 'string', default: '' }
+      urls: { default: [] },        // array of strings
+      statusKey: { default: '' }    // HUD key
     },
     init: function(){
-      this._i = 0;
+      this._try = 0;
       this._urls = [];
-      try { this._urls = JSON.parse(this.data.urls) || []; } catch(e){ this._urls = []; }
       this._statusKey = this.data.statusKey || '';
-      this._onLoaded = this._onLoaded.bind(this);
-      this._onError  = this._onError.bind(this);
+      // Parse JSON-ish array passed as string in HTML attribute (already in the file).
+      try {
+        this._urls = Array.isArray(this.data.urls) ? this.data.urls : [];
+      } catch(e){ this._urls = []; }
 
-      this.el.addEventListener('model-loaded', this._onLoaded);
-      this.el.addEventListener('model-error',  this._onError);
+      // Some A-Frame versions stringify arrays; handle that.
+      if (typeof this.data.urls === 'string'){
+        try { this._urls = JSON.parse(this.data.urls); } catch(e){ this._urls = []; }
+      }
 
-      // Start.
-      if (window.__npcHud) window.__npcHud.ensure();
-      this._try();
-    },
-    remove: function(){
-      this.el.removeEventListener('model-loaded', this._onLoaded);
-      this.el.removeEventListener('model-error',  this._onError);
-    },
-    _try: function(){
-      const key = this._statusKey;
-      const urls = this._urls;
-      if (!urls.length){
-        if (window.__npcHud && key) window.__npcHud.set(key, 'NO URLS', 'bad');
+      if (!this._urls || this._urls.length === 0){
+        if (this._statusKey) setHud(this._statusKey, 'FAILED (no urls)');
         return;
       }
-      const url = urls[Math.min(this._i, urls.length-1)];
-      if (window.__npcHud && key) window.__npcHud.set(key, 'trying ' + (this._i+1) + '/' + urls.length, 'warn');
-      // Set the model URL directly.
-      this.el.setAttribute('gltf-model', url);
+      this._loadNext();
     },
-    _onLoaded: function(){
-      const key = this._statusKey;
-      const url = this._urls[Math.min(this._i, this._urls.length-1)];
-      if (window.__npcHud && key) window.__npcHud.set(key, 'ok (' + (new URL(url)).hostname + ')', 'ok');
-    },
-    _onError: function(e){
-      const key = this._statusKey;
+    _loadNext: function(){
+      const el = this.el;
       const urls = this._urls;
-      // Advance to next URL if any.
-      const msg = (e && e.detail && (e.detail.message || e.detail.error || e.detail)) ? (e.detail.message || e.detail.error || String(e.detail)) : 'model-error';
-      if (this._i < urls.length - 1){
-        if (window.__npcHud && key) window.__npcHud.set(key, 'error → retry (' + msg + ')', 'warn');
-        this._i++;
-        // Small delay avoids spamming the loader.
-        setTimeout(() => this._try(), 150);
-      } else {
-        if (window.__npcHud && key) window.__npcHud.set(key, 'FAILED (' + msg + ')', 'bad');
+      if (this._try >= urls.length){
+        if (this._statusKey) setHud(this._statusKey, 'FAILED (all sources)');
+        el.emit('gltf-fallback-error', {statusKey: this._statusKey});
+        return;
       }
+      const url = urls[this._try];
+      this._try++;
+
+      if (this._statusKey) setHud(this._statusKey, `loading (${new URL(url).hostname})`);
+
+      const onLoaded = ()=>{
+        el.removeEventListener('model-loaded', onLoaded);
+        el.removeEventListener('model-error', onError);
+        if (this._statusKey) setHud(this._statusKey, `ok (${new URL(url).hostname})`);
+        // Slightly improve visuals for Mixamo: ensure double-sided, avoid weird "side clipping" on thin geo.
+        try {
+          el.object3D.traverse(o=>{
+            if (!o.isMesh || !o.material) return;
+            const mats = Array.isArray(o.material) ? o.material : [o.material];
+            mats.forEach(m=>{
+              if (!m) return;
+              m.side = THREE.DoubleSide;
+              // For many Mixamo materials alpha is unused; keep stable defaults:
+              if (m.transparent) m.depthWrite = true;
+            });
+          });
+        } catch(e){}
+        el.emit('gltf-fallback-loaded', {url, statusKey: this._statusKey});
+      };
+
+      const onError = (evt)=>{
+        el.removeEventListener('model-loaded', onLoaded);
+        el.removeEventListener('model-error', onError);
+        console.warn('[gltf-fallback] model-error for', url, evt && evt.detail ? evt.detail : evt);
+        // Small delay avoids spamming the loader.
+        setTimeout(()=>this._loadNext(), 120);
+      };
+
+      el.addEventListener('model-loaded', onLoaded);
+      el.addEventListener('model-error', onError);
+      el.setAttribute('gltf-model', url);
     }
   });
 
-  // --- NPC simple gallery walker ----------------------------------------
-  // One entity "exists once"; children hold idle + walk models. We toggle visibility.
-  // Waypoints are passed as a selector string (e.g. ".wpKate").
-  const NPC_REG = {};
-  window.__npcRegistry = NPC_REG;
-
+  // --- NPC gallery walker (idle/walk swap + waypoint roaming + basic avoidance) ----
+  // NOTE: This is lightweight avoidance, not full navmesh pathfinding.
+  // It prevents walking THROUGH marked collidables and reduces NPC overlap.
   AFRAME.registerComponent('npc-gallery-walker', {
     schema: {
       name: { type: 'string', default: 'NPC' },
       speed: { type: 'number', default: 0.9 },
-      arrive: { type: 'number', default: 0.35 },
+      arrive: { type: 'number', default: 0.40 },
+      minTravel: { type: 'number', default: 2.2 },     // ensure next target isn't basically current spot
 
-      // Back-compat (old attrs). If artWaitMin/Max are not provided, these are used.
+      // Long "looking at art" dwell time.
+      artWaitMin: { type: 'number', default: 12.0 },
+      artWaitMax: { type: 'number', default: 26.0 },
+
+      // Shorter "chat at meet point" dwell time.
+      meetWaitMin: { type: 'number', default: 5.0 },
+      meetWaitMax: { type: 'number', default: 10.0 },
+
+      // Back-compat (unused in this build, but kept so existing attrs don't break).
       waitMin: { type: 'number', default: 1.5 },
       waitMax: { type: 'number', default: 4.0 },
 
-      // Long "looking at art" dwell time.
-      artWaitMin: { type: 'number', default: 10.0 },
-      artWaitMax: { type: 'number', default: 22.0 },
-
-      // Shorter "chat at meet point" dwell time.
-      meetWaitMin: { type: 'number', default: 4.0 },
-      meetWaitMax: { type: 'number', default: 9.0 },
-
-      // Selector for art stop waypoints (typically in front of artworks).
+      // Selector list for art stop waypoints.
       waypoints: { type: 'string', default: '' },
 
-      // Optional selector for shared meet points (so NPCs can converge).
+      // Selector for shared meet points (so NPCs can converge).
       meetSelector: { type: 'string', default: '' },
-      meetChance: { type: 'number', default: 0.22 },
+      meetChance: { type: 'number', default: 0.20 },
       meetCooldown: { type: 'number', default: 30.0 },
 
-      modelYaw: { type: 'number', default: 180 }  // extra yaw to align Mixamo forward
+      // Avoidance
+      colliderSelector: { type: 'string', default: '.collidable' },
+      avoidDist: { type: 'number', default: 0.80 },    // stop/steer if obstacle this close
+      avoidStrength: { type: 'number', default: 1.25 },
+      sepDist: { type: 'number', default: 1.10 },      // keep NPCs from stacking
+      sepStrength: { type: 'number', default: 1.0 },
+      repathAfter: { type: 'number', default: 1.0 },   // seconds blocked before repicking target
+
+      modelYaw: { type: 'number', default: 180 }       // extra yaw to align Mixamo forward
     },
 
     init: function(){
-      this.name = this.data.name.toUpperCase();
+      this.name = (this.data.name || 'NPC').toUpperCase();
       NPC_REG[this.name] = this.el;
+
+      this.el.classList.add('npc-agent');
 
       this.idleEl = this.el.querySelector('.npc-idle');
       this.walkEl = this.el.querySelector('.npc-walk');
       this.placeholderEl = this.el.querySelector('.npc-placeholder');
-      this.labelEl = this.el.querySelector('.npc-label');
+
+      // Apply modelYaw (align Mixamo) directly to both idle/walk holders.
+      const yaw = this.data.modelYaw || 0;
+      if (this.idleEl) this.idleEl.setAttribute('rotation', {x:0, y:yaw, z:0});
+      if (this.walkEl) this.walkEl.setAttribute('rotation', {x:0, y:yaw, z:0});
 
       this._state = 'idle';
-      this._waitT = this._rand(this._artWaitMin(), this._artWaitMax());
+      this._waitT = this._rand(this.data.artWaitMin, this.data.artWaitMax);
       this._target = null;
 
       this._wpsArt = [];
       this._wpsMeet = [];
       this._meetCd = this.data.meetCooldown * (0.35 + Math.random() * 0.65); // desync
 
+      this._blockedT = 0;
+
+      this._raycaster = new THREE.Raycaster();
+      this._colliderMeshes = [];
       this._refreshWaypoints();
+      this._collectCollidersSoon();
 
-      // Keep refreshed in case the scene adds waypoints later.
-      this.el.sceneEl.addEventListener('loaded', () => this._refreshWaypoints());
+      // Refresh colliders occasionally (scene may stream-in assets).
+      this._colliderTimer = 0;
 
-      this._setState('idle');
-
-      // Hide placeholder once at least one model succeeds (idle OR walk).
-      const hidePlaceholderIfLoaded = () => {
+      // Hide placeholder once a model loads.
+      const onLoaded = ()=>{
         if (this.placeholderEl) this.placeholderEl.setAttribute('visible', false);
+        this.el.removeEventListener('gltf-fallback-loaded', onLoaded);
       };
-      if (this.idleEl) this.idleEl.addEventListener('model-loaded', hidePlaceholderIfLoaded);
-      if (this.walkEl) this.walkEl.addEventListener('model-loaded', hidePlaceholderIfLoaded);
+      this.el.addEventListener('gltf-fallback-loaded', onLoaded);
+
+      // Ensure initial state is idle (show idle model only).
+      this._setState('idle');
+    },
+
+    remove: function(){
+      delete NPC_REG[this.name];
     },
 
     tick: function(_, dtMs){
       const dt = Math.min(0.05, dtMs / 1000); // clamp
       if (!this._wpsArt.length && !this._wpsMeet.length) return;
 
+      // Refresh collider meshes ~ every 2 seconds.
+      this._colliderTimer += dt;
+      if (this._colliderTimer > 2.0){
+        this._colliderTimer = 0;
+        this._collectColliders();
+      }
+
       this._meetCd = Math.max(0, this._meetCd - dt);
 
       if (this._state === 'idle'){
         this._waitT -= dt;
 
-        // Social micro-interaction: if another NPC is close, look at them a bit.
+        // tiny social look: if another NPC is close, glance toward them
         this._socialLook(dt);
 
         if (this._waitT <= 0){
           this._pickNextTarget();
-          this._setState('walk');
+          if (this._target) this._setState('walk');
+          else {
+            // no target? wait again.
+            this._waitT = this._rand(this.data.artWaitMin, this.data.artWaitMax);
+          }
         }
         return;
       }
 
-      // WALK state
-      if (!this._target) this._pickNextTarget();
-      if (!this._target) return;
+      // walking
+      if (!this._target) { this._pickNextTarget(); if (!this._target){ this._setState('idle'); return; } }
 
       const pos = this.el.object3D.position;
       const tgt = this._target.object3D.position;
@@ -984,15 +1064,6 @@ AFRAME.registerComponent('light-beam', {
       const dz = tgt.z - pos.z;
       const dist = Math.sqrt(dx*dx + dz*dz);
 
-      // Rotate towards movement direction (parent yaw only).
-      if (dist > 0.001){
-        const desiredYaw = Math.atan2(dx, dz) * 180 / Math.PI; // A-Frame yaw: y-axis
-        const curYaw = this.el.getAttribute('rotation').y;
-        const newYaw = this._lerpAngle(curYaw, desiredYaw, Math.min(1, dt * 4.0));
-        this.el.setAttribute('rotation', {x:0, y:newYaw, z:0});
-      }
-
-      const step = this.data.speed * dt;
       if (dist <= this.data.arrive){
         // Arrived
         this._setState('idle');
@@ -1002,22 +1073,133 @@ AFRAME.registerComponent('light-beam', {
           this._waitT = this._rand(this.data.meetWaitMin, this.data.meetWaitMax);
           this._meetCd = this.data.meetCooldown; // reset cooldown after meeting
         } else {
-          this._waitT = this._rand(this._artWaitMin(), this._artWaitMax());
+          this._waitT = this._rand(this.data.artWaitMin, this.data.artWaitMax);
         }
 
         // Face the thing we arrived at.
-        if (this._target){
+        if (dist > 0.001){
           const desiredYaw = Math.atan2(dx, dz) * 180 / Math.PI;
           this.el.setAttribute('rotation', {x:0, y:desiredYaw, z:0});
         }
         return;
       }
 
-      // Move
-      const nx = dx / (dist || 1);
-      const nz = dz / (dist || 1);
-      pos.x += nx * step;
-      pos.z += nz * step;
+      // Desired direction to target
+      const desired = new THREE.Vector3(dx, 0, dz);
+      desired.normalize();
+
+      // Separation from other NPCs
+      const sep = this._separationVector();
+
+      // Obstacle avoidance (push away from nearest hit in front)
+      const avoid = this._avoidanceVector(desired, dt);
+
+      // Combine steering
+      const steer = desired.clone()
+        .add(sep.multiplyScalar(this.data.sepStrength))
+        .add(avoid.multiplyScalar(this.data.avoidStrength));
+
+      // If completely canceled, keep moving toward target.
+      if (steer.lengthSq() < 0.0001){
+        steer.copy(desired);
+      }
+      steer.normalize();
+
+      // If blocked for too long, repick target.
+      if (this._blockedT > this.data.repathAfter){
+        this._blockedT = 0;
+        this._pickNextTarget(true);
+      }
+
+      // Rotate towards steering direction
+      const desiredYaw = Math.atan2(steer.x, steer.z) * 180 / Math.PI;
+      const curYaw = this.el.getAttribute('rotation').y;
+      const newYaw = this._lerpAngle(curYaw, desiredYaw, Math.min(1, dt * 4.0));
+      this.el.setAttribute('rotation', {x:0, y:newYaw, z:0});
+
+      // Step
+      const step = this.data.speed * dt;
+      pos.x += steer.x * step;
+      pos.z += steer.z * step;
+    },
+
+    _collectCollidersSoon: function(){
+      // A-frame builds meshes after a tick; wait a bit.
+      setTimeout(()=>this._collectColliders(), 250);
+      setTimeout(()=>this._collectColliders(), 1500);
+    },
+
+    _collectColliders: function(){
+      const sel = this.data.colliderSelector || '.collidable';
+      const els = Array.from(document.querySelectorAll(sel)).filter(e=>{
+        if (!e) return false;
+        if (e.closest('#npc-waypoints') || e.closest('#characters')) return false;
+        return true;
+      });
+
+      const meshes = [];
+      els.forEach(el=>{
+        if (!el.object3D) return;
+        el.object3D.traverse(o=>{
+          if (o.isMesh) meshes.push(o);
+        });
+      });
+      this._colliderMeshes = meshes;
+    },
+
+    _avoidanceVector: function(forward, dt){
+      // Raycast a bit ahead at torso height.
+      const pos = this.el.object3D.position;
+      const origin = new THREE.Vector3(pos.x, pos.y + 1.0, pos.z);
+
+      if (!this._colliderMeshes || this._colliderMeshes.length === 0){
+        this._blockedT = Math.max(0, this._blockedT - dt); // decay
+        return new THREE.Vector3(0,0,0);
+      }
+
+      this._raycaster.set(origin, forward);
+      this._raycaster.far = Math.max(0.01, this.data.avoidDist);
+
+      const hits = this._raycaster.intersectObjects(this._colliderMeshes, true);
+      if (!hits || hits.length === 0){
+        this._blockedT = Math.max(0, this._blockedT - dt);
+        return new THREE.Vector3(0,0,0);
+      }
+
+      const hit = hits[0];
+      // Push away from the hit point.
+      const away = origin.clone().sub(hit.point);
+      away.y = 0;
+      const len = away.length();
+      if (len > 0.0001) away.multiplyScalar(1/len);
+
+      // Count as "blocked" only if very close.
+      this._blockedT += dt;
+
+      return away;
+    },
+
+    _separationVector: function(){
+      const pos = this.el.object3D.position;
+      const out = new THREE.Vector3(0,0,0);
+      const others = getNPCList();
+      const r = this.data.sepDist;
+
+      for (let i=0;i<others.length;i++){
+        const o = others[i];
+        if (!o || o === this.el) continue;
+        const op = o.object3D.position;
+        const dx = pos.x - op.x;
+        const dz = pos.z - op.z;
+        const d2 = dx*dx + dz*dz;
+        if (d2 < 0.0001) continue;
+        const d = Math.sqrt(d2);
+        if (d >= r) continue;
+        const w = (r - d) / r; // 0..1
+        out.x += (dx / d) * w;
+        out.z += (dz / d) * w;
+      }
+      return out;
     },
 
     _refreshWaypoints: function(){
@@ -1028,42 +1210,53 @@ AFRAME.registerComponent('light-beam', {
       this._wpsMeet = meetSel ? Array.from(document.querySelectorAll(meetSel)) : [];
     },
 
-    _pickNextTarget: function(){
+    _pickNextTarget: function(force){
       const hasArt = this._wpsArt.length > 0;
       const hasMeet = this._wpsMeet.length > 0;
-
       if (!hasArt && !hasMeet) return;
 
-      const current = this._target;
+      const pos = this.el.object3D.position;
+      const minTravel = this.data.minTravel || 0;
 
-      // Occasionally converge to a meet point (shared by all) so NPCs "cross paths".
-      if (hasMeet && this._meetCd <= 0 && Math.random() < this.data.meetChance){
+      // Occasionally converge to a meet point (shared by all) so NPCs cross paths.
+      if (hasMeet && (force || (this._meetCd <= 0 && Math.random() < this.data.meetChance))){
         let chosen = null;
-        for (let tries = 0; tries < 6; tries++){
+        for (let tries = 0; tries < 10; tries++){
           const cand = this._wpsMeet[Math.floor(Math.random() * this._wpsMeet.length)];
           if (!cand) continue;
-          if (current && cand === current) continue;
+          const cp = cand.object3D.position;
+          const dx = cp.x - pos.x, dz = cp.z - pos.z;
+          const d = Math.sqrt(dx*dx + dz*dz);
+          if (d < minTravel) continue;
           chosen = cand; break;
         }
         this._target = chosen || this._wpsMeet[0];
         return;
       }
 
-      // Otherwise pick an art stop, bias away from current.
+      // Otherwise pick an art stop at least minTravel away.
       if (hasArt){
         let chosen = null;
-        for (let tries = 0; tries < 6; tries++){
+        for (let tries = 0; tries < 12; tries++){
           const cand = this._wpsArt[Math.floor(Math.random() * this._wpsArt.length)];
           if (!cand) continue;
-          if (current && cand === current) continue;
+          const cp = cand.object3D.position;
+          const dx = cp.x - pos.x, dz = cp.z - pos.z;
+          const d = Math.sqrt(dx*dx + dz*dz);
+          if (d < minTravel) continue;
           chosen = cand; break;
         }
-        this._target = chosen || this._wpsArt[0];
+        this._target = chosen || this._wpsArt[Math.floor(Math.random() * this._wpsArt.length)];
         return;
       }
 
       // Fallback: only meet points exist.
-      this._target = this._wpsMeet[0];
+      this._target = this._wpsMeet[Math.floor(Math.random() * this._wpsMeet.length)];
+    },
+
+    _isMeet: function(el){
+      if (!el) return false;
+      return el.classList && el.classList.contains('meet');
     },
 
     _setState: function(s){
@@ -1071,49 +1264,39 @@ AFRAME.registerComponent('light-beam', {
       const isWalk = s === 'walk';
       if (this.idleEl) this.idleEl.setAttribute('visible', !isWalk);
       if (this.walkEl) this.walkEl.setAttribute('visible', isWalk);
-
-      // Animation mixer is applied on the visible child (idle or walk) by component attributes already.
-      // Keep label above head.
-      if (this.labelEl){
-        this.labelEl.object3D.position.y = 2.05;
-      }
-    },
-
-    _isMeet: function(wpEl){
-      if (!wpEl) return false;
-      return wpEl.classList && wpEl.classList.contains('meet');
     },
 
     _socialLook: function(dt){
-      // If another NPC is close (<2.0), slowly turn towards them.
-      const myPos = this.el.object3D.position;
-      let nearest = null, nearestD = 999;
-      for (const k in NPC_REG){
-        const other = NPC_REG[k];
-        if (!other || other === this.el) continue;
-        const p = other.object3D.position;
-        const dx = p.x - myPos.x;
-        const dz = p.z - myPos.z;
+      // If another NPC is close while idling, glance toward them occasionally.
+      const pos = this.el.object3D.position;
+      let nearest = null;
+      let bestD = 999;
+
+      const others = getNPCList();
+      for (let i=0;i<others.length;i++){
+        const o = others[i];
+        if (!o || o === this.el) continue;
+        const op = o.object3D.position;
+        const dx = op.x - pos.x;
+        const dz = op.z - pos.z;
         const d = Math.sqrt(dx*dx + dz*dz);
-        if (d < nearestD){ nearestD = d; nearest = other; }
+        if (d < bestD){
+          bestD = d;
+          nearest = o;
+        }
       }
-      if (!nearest || nearestD > 2.0) return;
+      if (!nearest || bestD > 1.6) return;
 
-      const p = nearest.object3D.position;
-      const desiredYaw = Math.atan2((p.x - myPos.x), (p.z - myPos.z)) * 180 / Math.PI;
-      const curYaw = this.el.getAttribute('rotation').y;
-      const newYaw = this._lerpAngle(curYaw, desiredYaw, Math.min(1, dt * 1.8));
-      this.el.setAttribute('rotation', {x:0, y:newYaw, z:0});
-      // Linger a bit longer if chatting.
-      this._waitT = Math.max(this._waitT, 2.0);
-    },
-
-    _artWaitMin: function(){
-      // If user didn't specify artWaitMin/Max, fall back to waitMin/Max.
-      return (this.data.artWaitMin != null) ? this.data.artWaitMin : this.data.waitMin;
-    },
-    _artWaitMax: function(){
-      return (this.data.artWaitMax != null) ? this.data.artWaitMax : this.data.waitMax;
+      // small chance per second to turn toward them.
+      if (Math.random() < dt * 0.5){
+        const op = nearest.object3D.position;
+        const dx = op.x - pos.x;
+        const dz = op.z - pos.z;
+        const desiredYaw = Math.atan2(dx, dz) * 180 / Math.PI;
+        const curYaw = this.el.getAttribute('rotation').y;
+        const newYaw = this._lerpAngle(curYaw, desiredYaw, Math.min(1, dt * 2.0));
+        this.el.setAttribute('rotation', {x:0, y:newYaw, z:0});
+      }
     },
 
     _rand: function(a,b){ return a + Math.random() * (b-a); },
@@ -4698,21 +4881,28 @@ AFRAME.registerComponent('pbr-carpet', {
   <!-- Station 3 (art stops) -->
   <a-entity id="wp_s3_a1" class="wp s3 art" position="15.10 0 7.40"></a-entity>
   <a-entity id="wp_s3_a2" class="wp s3 art" position="13.20 0 7.80"></a-entity>
+  <a-entity id="wp_s3_a3" class="wp s3 art" position="12.10 0 9.30"></a-entity>
+  <a-entity id="wp_s3_a4" class="wp s3 art" position="14.40 0 9.10"></a-entity>
 
   <a-entity id="wp_s3_mid" class="wp s3 art" position="15.10 0 11.40"></a-entity>
   <a-entity id="wp_s3_mid2" class="wp s3 art" position="13.60 0 12.30"></a-entity>
 
   <a-entity id="wp_s3_c1" class="wp s3 art" position="15.10 0 15.40"></a-entity>
   <a-entity id="wp_s3_c2" class="wp s3 art" position="13.30 0 15.80"></a-entity>
+  <a-entity id="wp_s3_c3" class="wp s3 art" position="12.20 0 16.30"></a-entity>
+  <a-entity id="wp_s3_c4" class="wp s3 art" position="14.50 0 14.10"></a-entity>
 
   <!-- Connector / social meet (shared) -->
   <a-entity id="wp_meet" class="wp meet" position="12.00 0 18.00"></a-entity>
   <a-entity id="wp_meet2" class="wp meet" position="10.80 0 18.20"></a-entity>
   <a-entity id="wp_meet3" class="wp meet" position="13.10 0 18.50"></a-entity>
+  <a-entity id="wp_meet4" class="wp meet" position="11.10 0 17.60"></a-entity>
 
   <!-- Connector stroll points -->
   <a-entity id="wp_conn1" class="wp conn art" position="12.40 0 19.80"></a-entity>
   <a-entity id="wp_conn2" class="wp conn art" position="11.30 0 20.20"></a-entity>
+  <a-entity id="wp_conn3" class="wp conn art" position="12.90 0 20.70"></a-entity>
+  <a-entity id="wp_conn4" class="wp conn art" position="10.60 0 19.50"></a-entity>
 
   <!-- Station 4 (art stops) -->
   <a-entity id="wp_s4_entry" class="wp s4 art" position="11.80 0 21.10"></a-entity>
@@ -4728,8 +4918,8 @@ AFRAME.registerComponent('pbr-carpet', {
 <a-entity id="characters">
 
   <!-- KATE (Station 3 visitor) -->
-  <a-entity id="CHAR_KATE" position="15.10 0 7.20" rotation="0 0 0"
-            npc-gallery-walker="name: KATE; speed: 0.85; waypoints: #wp_s3_a1, #wp_s3_a2, #wp_s3_mid, #wp_s3_mid2, #wp_s3_c1, #wp_s3_c2; meetSelector: #wp_meet, #wp_meet2, #wp_meet3; meetChance: 0.26; meetCooldown: 34; artWaitMin: 12; artWaitMax: 26; meetWaitMin: 6; meetWaitMax: 11; modelYaw: 180">
+  <a-entity id="CHAR_KATE" position="14.80 0 10.30" rotation="0 0 0"
+            npc-gallery-walker="name: KATE; speed: 0.85; arrive: 0.40; minTravel: 2.6; waypoints: #wp_s3_a1, #wp_s3_a2, #wp_s3_a3, #wp_s3_a4, #wp_s3_mid2, #wp_s3_mid; meetSelector: .wp.meet; meetChance: 0.18; meetCooldown: 35; artWaitMin: 14; artWaitMax: 32; meetWaitMin: 6; meetWaitMax: 12; modelYaw: 180; avoidDist: 0.80; sepDist: 1.15">
     <a-cylinder class="npc-placeholder" radius="0.28" height="1.65" position="0 0.825 0"
                 material="shader: standard; color: #ffffff; opacity: 0.18; transparent: true; roughness: 0.9; metalness: 0.0"></a-cylinder>
 
@@ -4740,14 +4930,11 @@ AFRAME.registerComponent('pbr-carpet', {
     <a-entity class="npc-walk" position="0 0 0" scale="1 1 1" visible="false"
               gltf-fallback='urls: ["https://epoliluisito.github.io/museum-models/characters/kate_walk.glb", "https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/kate_walk.glb", "https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/kate_walk.glb"]; statusKey: KATE walk'
               animation-mixer="clip: *; loop: repeat;"></a-entity>
-
-    <a-text value="KATE" position="0 2.05 0" align="center" width="3.5"
-            color="#ffffff" opacity="0.8" negate="false" font="https://cdn.aframe.io/fonts/Roboto-msdf.json"></a-text>
-  </a-entity>
+</a-entity>
 
   <!-- FRANK (deep in Station 3) -->
-  <a-entity id="CHAR_FRANK" position="15.40 0 15.60" rotation="0 180 0"
-            npc-gallery-walker="name: FRANK; speed: 0.90; waypoints: #wp_s3_c1, #wp_s3_c2, #wp_s3_mid2, #wp_s3_mid, #wp_s3_a2; meetSelector: #wp_meet, #wp_meet2, #wp_meet3; meetChance: 0.22; meetCooldown: 36; artWaitMin: 10; artWaitMax: 24; meetWaitMin: 5; meetWaitMax: 10; modelYaw: 180">
+  <a-entity id="CHAR_FRANK" position="14.50 0 14.70" rotation="0 180 0"
+            npc-gallery-walker="name: FRANK; speed: 0.92; arrive: 0.40; minTravel: 2.4; waypoints: #wp_s3_c1, #wp_s3_c2, #wp_s3_c3, #wp_s3_c4, #wp_s3_mid, #wp_s3_mid2, #wp_conn1; meetSelector: .wp.meet; meetChance: 0.18; meetCooldown: 35; artWaitMin: 12; artWaitMax: 28; meetWaitMin: 5; meetWaitMax: 11; modelYaw: 180; avoidDist: 0.80; sepDist: 1.15">
     <a-cylinder class="npc-placeholder" radius="0.28" height="1.65" position="0 0.825 0"
                 material="shader: standard; color: #ffffff; opacity: 0.18; transparent: true; roughness: 0.9; metalness: 0.0"></a-cylinder>
 
@@ -4758,14 +4945,11 @@ AFRAME.registerComponent('pbr-carpet', {
     <a-entity class="npc-walk" position="0 0 0" scale="1 1 1" visible="false"
               gltf-fallback='urls: ["https://epoliluisito.github.io/museum-models/characters/frank_walk.glb", "https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/frank_walk.glb", "https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/frank_walk.glb"]; statusKey: FRANK walk'
               animation-mixer="clip: *; loop: repeat;"></a-entity>
-
-    <a-text value="FRANK" position="0 2.05 0" align="center" width="3.5"
-            color="#ffffff" opacity="0.8" font="https://cdn.aframe.io/fonts/Roboto-msdf.json"></a-text>
-  </a-entity>
+</a-entity>
 
   <!-- JAMES (Station 4 visitor) -->
-  <a-entity id="CHAR_JAMES" position="6.40 0 25.90" rotation="0 180 0"
-            npc-gallery-walker="name: JAMES; speed: 1.00; waypoints: #wp_s4_a4, #wp_s4_back, #wp_s4_mid, #wp_s4_dc, #wp_s4_a2, #wp_s4_entry, #wp_s4_wall; meetSelector: #wp_meet, #wp_meet2, #wp_meet3; meetChance: 0.20; meetCooldown: 40; artWaitMin: 11; artWaitMax: 25; meetWaitMin: 6; meetWaitMax: 12; modelYaw: 180">
+  <a-entity id="CHAR_JAMES" position="7.60 0 24.90" rotation="0 180 0"
+            npc-gallery-walker="name: JAMES; speed: 1.00; arrive: 0.40; minTravel: 2.8; waypoints: #wp_s4_a4, #wp_s4_back, #wp_s4_mid, #wp_s4_dc, #wp_s4_a2, #wp_s4_entry2, #wp_s4_entry; meetSelector: .wp.meet; meetChance: 0.20; meetCooldown: 30; artWaitMin: 12; artWaitMax: 26; meetWaitMin: 5; meetWaitMax: 10; modelYaw: 180; avoidDist: 0.80; sepDist: 1.20">
     <a-cylinder class="npc-placeholder" radius="0.28" height="1.65" position="0 0.825 0"
                 material="shader: standard; color: #ffffff; opacity: 0.18; transparent: true; roughness: 0.9; metalness: 0.0"></a-cylinder>
 
@@ -4776,14 +4960,11 @@ AFRAME.registerComponent('pbr-carpet', {
     <a-entity class="npc-walk" position="0 0 0" scale="1 1 1" visible="false"
               gltf-fallback='urls: ["https://epoliluisito.github.io/museum-models/characters/James_walk.glb", "https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/James_walk.glb", "https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/James_walk.glb"]; statusKey: JAMES walk'
               animation-mixer="clip: *; loop: repeat;"></a-entity>
-
-    <a-text value="JAMES" position="0 2.05 0" align="center" width="3.5"
-            color="#ffffff" opacity="0.8" font="https://cdn.aframe.io/fonts/Roboto-msdf.json"></a-text>
-  </a-entity>
+</a-entity>
 
   <!-- LOUISE (connector between Station 3 and 4) -->
-  <a-entity id="CHAR_LOUISE" position="11.80 0 20.10" rotation="0 180 0"
-            npc-gallery-walker="name: LOUISE; speed: 0.88; waypoints: #wp_conn1, #wp_conn2, #wp_s3_mid, #wp_s4_entry, #wp_s4_a2, #wp_s4_dc; meetSelector: #wp_meet, #wp_meet2, #wp_meet3; meetChance: 0.30; meetCooldown: 28; artWaitMin: 12; artWaitMax: 28; meetWaitMin: 7; meetWaitMax: 13; modelYaw: 180">
+  <a-entity id="CHAR_LOUISE" position="11.10 0 21.30" rotation="0 180 0"
+            npc-gallery-walker="name: LOUISE; speed: 0.90; arrive: 0.40; minTravel: 2.4; waypoints: #wp_conn1, #wp_conn2, #wp_conn3, #wp_conn4, #wp_s4_entry, #wp_s4_entry2, #wp_s4_wall, #wp_s4_a2; meetSelector: .wp.meet; meetChance: 0.22; meetCooldown: 28; artWaitMin: 15; artWaitMax: 34; meetWaitMin: 6; meetWaitMax: 12; modelYaw: 180; avoidDist: 0.80; sepDist: 1.15">
     <a-cylinder class="npc-placeholder" radius="0.28" height="1.65" position="0 0.825 0"
                 material="shader: standard; color: #ffffff; opacity: 0.18; transparent: true; roughness: 0.9; metalness: 0.0"></a-cylinder>
 
@@ -4794,10 +4975,7 @@ AFRAME.registerComponent('pbr-carpet', {
     <a-entity class="npc-walk" position="0 0 0" scale="1 1 1" visible="false"
               gltf-fallback='urls: ["https://epoliluisito.github.io/museum-models/characters/louise_walk.glb", "https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/louise_walk.glb", "https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/louise_walk.glb"]; statusKey: LOUISE walk'
               animation-mixer="clip: *; loop: repeat;"></a-entity>
-
-    <a-text value="LOUISE" position="0 2.05 0" align="center" width="3.5"
-            color="#ffffff" opacity="0.8" font="https://cdn.aframe.io/fonts/Roboto-msdf.json"></a-text>
-  </a-entity>
+</a-entity>
 
 </a-entity>
 <!-- ===== END CHARACTERS ===== -->
