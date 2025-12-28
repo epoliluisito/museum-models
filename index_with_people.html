@@ -898,9 +898,27 @@ AFRAME.registerComponent('light-beam', {
       name: { type: 'string', default: 'NPC' },
       speed: { type: 'number', default: 0.9 },
       arrive: { type: 'number', default: 0.35 },
+
+      // Back-compat (old attrs). If artWaitMin/Max are not provided, these are used.
       waitMin: { type: 'number', default: 1.5 },
       waitMax: { type: 'number', default: 4.0 },
-      waypoints: { type: 'string', default: '' }, // selector for waypoint entities
+
+      // Long "looking at art" dwell time.
+      artWaitMin: { type: 'number', default: 10.0 },
+      artWaitMax: { type: 'number', default: 22.0 },
+
+      // Shorter "chat at meet point" dwell time.
+      meetWaitMin: { type: 'number', default: 4.0 },
+      meetWaitMax: { type: 'number', default: 9.0 },
+
+      // Selector for art stop waypoints (typically in front of artworks).
+      waypoints: { type: 'string', default: '' },
+
+      // Optional selector for shared meet points (so NPCs can converge).
+      meetSelector: { type: 'string', default: '' },
+      meetChance: { type: 'number', default: 0.22 },
+      meetCooldown: { type: 'number', default: 30.0 },
+
       modelYaw: { type: 'number', default: 180 }  // extra yaw to align Mixamo forward
     },
 
@@ -911,23 +929,25 @@ AFRAME.registerComponent('light-beam', {
       this.idleEl = this.el.querySelector('.npc-idle');
       this.walkEl = this.el.querySelector('.npc-walk');
       this.placeholderEl = this.el.querySelector('.npc-placeholder');
-
-      // Apply a yaw correction to the models (keeps parent rotation for navigation).
-      if (this.idleEl) this.idleEl.setAttribute('rotation', '0 ' + this.data.modelYaw + ' 0');
-      if (this.walkEl) this.walkEl.setAttribute('rotation', '0 ' + this.data.modelYaw + ' 0');
-
-      this._wps = [];
-      this._refreshWaypoints();
+      this.labelEl = this.el.querySelector('.npc-label');
 
       this._state = 'idle';
-      this._waitT = this._rand(this.data.waitMin, this.data.waitMax);
+      this._waitT = this._rand(this._artWaitMin(), this._artWaitMax());
       this._target = null;
+
+      this._wpsArt = [];
+      this._wpsMeet = [];
+      this._meetCd = this.data.meetCooldown * (0.35 + Math.random() * 0.65); // desync
+
+      this._refreshWaypoints();
+
+      // Keep refreshed in case the scene adds waypoints later.
+      this.el.sceneEl.addEventListener('loaded', () => this._refreshWaypoints());
 
       this._setState('idle');
 
-      // Try to hide placeholder once at least one model succeeds
+      // Hide placeholder once at least one model succeeds (idle OR walk).
       const hidePlaceholderIfLoaded = () => {
-        // When either idle OR walk fires model-loaded, hide placeholder.
         if (this.placeholderEl) this.placeholderEl.setAttribute('visible', false);
       };
       if (this.idleEl) this.idleEl.addEventListener('model-loaded', hidePlaceholderIfLoaded);
@@ -936,11 +956,14 @@ AFRAME.registerComponent('light-beam', {
 
     tick: function(_, dtMs){
       const dt = Math.min(0.05, dtMs / 1000); // clamp
-      if (!this._wps.length) return;
+      if (!this._wpsArt.length && !this._wpsMeet.length) return;
+
+      this._meetCd = Math.max(0, this._meetCd - dt);
 
       if (this._state === 'idle'){
         this._waitT -= dt;
-        // Social micro-interaction at meet points: look at nearest NPC if close.
+
+        // Social micro-interaction: if another NPC is close, look at them a bit.
         this._socialLook(dt);
 
         if (this._waitT <= 0){
@@ -973,7 +996,15 @@ AFRAME.registerComponent('light-beam', {
       if (dist <= this.data.arrive){
         // Arrived
         this._setState('idle');
-        this._waitT = this._rand(this.data.waitMin, this.data.waitMax);
+
+        const isMeet = this._isMeet(this._target);
+        if (isMeet){
+          this._waitT = this._rand(this.data.meetWaitMin, this.data.meetWaitMax);
+          this._meetCd = this.data.meetCooldown; // reset cooldown after meeting
+        } else {
+          this._waitT = this._rand(this._artWaitMin(), this._artWaitMax());
+        }
+
         // Face the thing we arrived at.
         if (this._target){
           const desiredYaw = Math.atan2(dx, dz) * 180 / Math.PI;
@@ -990,23 +1021,49 @@ AFRAME.registerComponent('light-beam', {
     },
 
     _refreshWaypoints: function(){
-      const sel = this.data.waypoints;
-      if (!sel) return;
-      this._wps = Array.from(document.querySelectorAll(sel));
+      const artSel = this.data.waypoints;
+      this._wpsArt = artSel ? Array.from(document.querySelectorAll(artSel)) : [];
+
+      const meetSel = this.data.meetSelector;
+      this._wpsMeet = meetSel ? Array.from(document.querySelectorAll(meetSel)) : [];
     },
 
     _pickNextTarget: function(){
-      if (!this._wps.length) return;
-      // Choose a random waypoint, bias away from current.
+      const hasArt = this._wpsArt.length > 0;
+      const hasMeet = this._wpsMeet.length > 0;
+
+      if (!hasArt && !hasMeet) return;
+
       const current = this._target;
-      let chosen = null;
-      for (let tries = 0; tries < 6; tries++){
-        const cand = this._wps[Math.floor(Math.random() * this._wps.length)];
-        if (!cand) continue;
-        if (current && cand === current) continue;
-        chosen = cand; break;
+
+      // Occasionally converge to a meet point (shared by all) so NPCs "cross paths".
+      if (hasMeet && this._meetCd <= 0 && Math.random() < this.data.meetChance){
+        let chosen = null;
+        for (let tries = 0; tries < 6; tries++){
+          const cand = this._wpsMeet[Math.floor(Math.random() * this._wpsMeet.length)];
+          if (!cand) continue;
+          if (current && cand === current) continue;
+          chosen = cand; break;
+        }
+        this._target = chosen || this._wpsMeet[0];
+        return;
       }
-      this._target = chosen || this._wps[0];
+
+      // Otherwise pick an art stop, bias away from current.
+      if (hasArt){
+        let chosen = null;
+        for (let tries = 0; tries < 6; tries++){
+          const cand = this._wpsArt[Math.floor(Math.random() * this._wpsArt.length)];
+          if (!cand) continue;
+          if (current && cand === current) continue;
+          chosen = cand; break;
+        }
+        this._target = chosen || this._wpsArt[0];
+        return;
+      }
+
+      // Fallback: only meet points exist.
+      this._target = this._wpsMeet[0];
     },
 
     _setState: function(s){
@@ -1014,6 +1071,17 @@ AFRAME.registerComponent('light-beam', {
       const isWalk = s === 'walk';
       if (this.idleEl) this.idleEl.setAttribute('visible', !isWalk);
       if (this.walkEl) this.walkEl.setAttribute('visible', isWalk);
+
+      // Animation mixer is applied on the visible child (idle or walk) by component attributes already.
+      // Keep label above head.
+      if (this.labelEl){
+        this.labelEl.object3D.position.y = 2.05;
+      }
+    },
+
+    _isMeet: function(wpEl){
+      if (!wpEl) return false;
+      return wpEl.classList && wpEl.classList.contains('meet');
     },
 
     _socialLook: function(dt){
@@ -1037,7 +1105,15 @@ AFRAME.registerComponent('light-beam', {
       const newYaw = this._lerpAngle(curYaw, desiredYaw, Math.min(1, dt * 1.8));
       this.el.setAttribute('rotation', {x:0, y:newYaw, z:0});
       // Linger a bit longer if chatting.
-      this._waitT = Math.max(this._waitT, 1.2);
+      this._waitT = Math.max(this._waitT, 2.0);
+    },
+
+    _artWaitMin: function(){
+      // If user didn't specify artWaitMin/Max, fall back to waitMin/Max.
+      return (this.data.artWaitMin != null) ? this.data.artWaitMin : this.data.waitMin;
+    },
+    _artWaitMax: function(){
+      return (this.data.artWaitMax != null) ? this.data.artWaitMax : this.data.waitMax;
     },
 
     _rand: function(a,b){ return a + Math.random() * (b-a); },
@@ -4619,26 +4695,41 @@ AFRAME.registerComponent('pbr-carpet', {
 
 <!-- ===== NPC WAYPOINTS (invisible) ===== -->
 <a-entity id="npc-waypoints" visible="false">
-  <!-- Station 3 loop -->
-  <a-entity id="wp_s3_a1" class="wp s3" position="15.10 0 7.40"></a-entity>
-  <a-entity id="wp_s3_mid" class="wp s3" position="15.10 0 11.40"></a-entity>
-  <a-entity id="wp_s3_c1" class="wp s3" position="15.10 0 15.40"></a-entity>
+  <!-- Station 3 (art stops) -->
+  <a-entity id="wp_s3_a1" class="wp s3 art" position="15.10 0 7.40"></a-entity>
+  <a-entity id="wp_s3_a2" class="wp s3 art" position="13.20 0 7.80"></a-entity>
 
-  <!-- Connector / social meet -->
+  <a-entity id="wp_s3_mid" class="wp s3 art" position="15.10 0 11.40"></a-entity>
+  <a-entity id="wp_s3_mid2" class="wp s3 art" position="13.60 0 12.30"></a-entity>
+
+  <a-entity id="wp_s3_c1" class="wp s3 art" position="15.10 0 15.40"></a-entity>
+  <a-entity id="wp_s3_c2" class="wp s3 art" position="13.30 0 15.80"></a-entity>
+
+  <!-- Connector / social meet (shared) -->
   <a-entity id="wp_meet" class="wp meet" position="12.00 0 18.00"></a-entity>
+  <a-entity id="wp_meet2" class="wp meet" position="10.80 0 18.20"></a-entity>
+  <a-entity id="wp_meet3" class="wp meet" position="13.10 0 18.50"></a-entity>
 
-  <!-- Station 4 loop -->
-  <a-entity id="wp_s4_a2" class="wp s4" position="12.20 0 23.20"></a-entity>
-  <a-entity id="wp_s4_dc" class="wp s4" position="9.60 0 22.40"></a-entity>
-  <a-entity id="wp_s4_a4" class="wp s4" position="6.10 0 26.10"></a-entity>
+  <!-- Connector stroll points -->
+  <a-entity id="wp_conn1" class="wp conn art" position="12.40 0 19.80"></a-entity>
+  <a-entity id="wp_conn2" class="wp conn art" position="11.30 0 20.20"></a-entity>
+
+  <!-- Station 4 (art stops) -->
+  <a-entity id="wp_s4_entry" class="wp s4 art" position="11.80 0 21.10"></a-entity>
+  <a-entity id="wp_s4_a2" class="wp s4 art" position="12.20 0 23.20"></a-entity>
+  <a-entity id="wp_s4_dc" class="wp s4 art" position="9.60 0 22.40"></a-entity>
+  <a-entity id="wp_s4_mid" class="wp s4 art" position="8.20 0 24.00"></a-entity>
+  <a-entity id="wp_s4_wall" class="wp s4 art" position="7.20 0 22.00"></a-entity>
+  <a-entity id="wp_s4_a4" class="wp s4 art" position="6.10 0 26.10"></a-entity>
+  <a-entity id="wp_s4_back" class="wp s4 art" position="5.80 0 24.80"></a-entity>
 </a-entity>
 
 <!-- ===== CHARACTERS (single instance each; idle/walk swap) ===== -->
 <a-entity id="characters">
 
   <!-- KATE (Station 3 visitor) -->
-  <a-entity id="CHAR_KATE" position="14.60 0 8.10" rotation="0 0 0"
-            npc-gallery-walker="name: KATE; speed: 0.95; waypoints: #wp_s3_a1, #wp_s3_mid, #wp_s3_c1, #wp_meet; waitMin: 1.8; waitMax: 4.2; modelYaw: 180">
+  <a-entity id="CHAR_KATE" position="15.10 0 7.20" rotation="0 0 0"
+            npc-gallery-walker="name: KATE; speed: 0.85; waypoints: #wp_s3_a1, #wp_s3_a2, #wp_s3_mid, #wp_s3_mid2, #wp_s3_c1, #wp_s3_c2; meetSelector: #wp_meet, #wp_meet2, #wp_meet3; meetChance: 0.26; meetCooldown: 34; artWaitMin: 12; artWaitMax: 26; meetWaitMin: 6; meetWaitMax: 11; modelYaw: 180">
     <a-cylinder class="npc-placeholder" radius="0.28" height="1.65" position="0 0.825 0"
                 material="shader: standard; color: #ffffff; opacity: 0.18; transparent: true; roughness: 0.9; metalness: 0.0"></a-cylinder>
 
@@ -4655,8 +4746,8 @@ AFRAME.registerComponent('pbr-carpet', {
   </a-entity>
 
   <!-- FRANK (deep in Station 3) -->
-  <a-entity id="CHAR_FRANK" position="15.55 0 14.80" rotation="0 180 0"
-            npc-gallery-walker="name: FRANK; speed: 0.85; waypoints: #wp_s3_c1, #wp_s3_mid, #wp_meet; waitMin: 2.0; waitMax: 5.0; modelYaw: 180">
+  <a-entity id="CHAR_FRANK" position="15.40 0 15.60" rotation="0 180 0"
+            npc-gallery-walker="name: FRANK; speed: 0.90; waypoints: #wp_s3_c1, #wp_s3_c2, #wp_s3_mid2, #wp_s3_mid, #wp_s3_a2; meetSelector: #wp_meet, #wp_meet2, #wp_meet3; meetChance: 0.22; meetCooldown: 36; artWaitMin: 10; artWaitMax: 24; meetWaitMin: 5; meetWaitMax: 10; modelYaw: 180">
     <a-cylinder class="npc-placeholder" radius="0.28" height="1.65" position="0 0.825 0"
                 material="shader: standard; color: #ffffff; opacity: 0.18; transparent: true; roughness: 0.9; metalness: 0.0"></a-cylinder>
 
@@ -4673,8 +4764,8 @@ AFRAME.registerComponent('pbr-carpet', {
   </a-entity>
 
   <!-- JAMES (Station 4 visitor) -->
-  <a-entity id="CHAR_JAMES" position="10.20 0 22.80" rotation="0 180 0"
-            npc-gallery-walker="name: JAMES; speed: 0.95; waypoints: #wp_s4_dc, #wp_s4_a2, #wp_s4_a4, #wp_meet; waitMin: 1.6; waitMax: 4.0; modelYaw: 180">
+  <a-entity id="CHAR_JAMES" position="6.40 0 25.90" rotation="0 180 0"
+            npc-gallery-walker="name: JAMES; speed: 1.00; waypoints: #wp_s4_a4, #wp_s4_back, #wp_s4_mid, #wp_s4_dc, #wp_s4_a2, #wp_s4_entry, #wp_s4_wall; meetSelector: #wp_meet, #wp_meet2, #wp_meet3; meetChance: 0.20; meetCooldown: 40; artWaitMin: 11; artWaitMax: 25; meetWaitMin: 6; meetWaitMax: 12; modelYaw: 180">
     <a-cylinder class="npc-placeholder" radius="0.28" height="1.65" position="0 0.825 0"
                 material="shader: standard; color: #ffffff; opacity: 0.18; transparent: true; roughness: 0.9; metalness: 0.0"></a-cylinder>
 
@@ -4691,8 +4782,8 @@ AFRAME.registerComponent('pbr-carpet', {
   </a-entity>
 
   <!-- LOUISE (connector between Station 3 and 4) -->
-  <a-entity id="CHAR_LOUISE" position="12.60 0 18.90" rotation="0 180 0"
-            npc-gallery-walker="name: LOUISE; speed: 0.90; waypoints: #wp_meet, #wp_s3_mid, #wp_s4_a2, #wp_s4_dc; waitMin: 1.8; waitMax: 4.6; modelYaw: 180">
+  <a-entity id="CHAR_LOUISE" position="11.80 0 20.10" rotation="0 180 0"
+            npc-gallery-walker="name: LOUISE; speed: 0.88; waypoints: #wp_conn1, #wp_conn2, #wp_s3_mid, #wp_s4_entry, #wp_s4_a2, #wp_s4_dc; meetSelector: #wp_meet, #wp_meet2, #wp_meet3; meetChance: 0.30; meetCooldown: 28; artWaitMin: 12; artWaitMax: 28; meetWaitMin: 7; meetWaitMax: 13; modelYaw: 180">
     <a-cylinder class="npc-placeholder" radius="0.28" height="1.65" position="0 0.825 0"
                 material="shader: standard; color: #ffffff; opacity: 0.18; transparent: true; roughness: 0.9; metalness: 0.0"></a-cylinder>
 
