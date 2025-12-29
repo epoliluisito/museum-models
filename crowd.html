@@ -1051,10 +1051,6 @@ AFRAME.registerComponent('mixamo-mat-fix', {
     });
   }
 });
-      });
-    });
-  }
-});
 
   // --- NPC simple gallery walker ----------------------------------------
   // One entity "exists once"; children hold idle + walk models. We toggle visibility.
@@ -1450,8 +1446,6 @@ AFRAME.registerComponent('mixamo-mat-fix', {
       }
       return false;
     },
-
-    _bestSideStep
 
     _bestSideStep: function(pos, nx, nz){
       // Choose the side with more free space by casting short rays left/right.
