@@ -448,7 +448,14 @@ AFRAME.registerComponent('light-beam', {
       background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAAAyBAMAAADsEZWCAAAAGFBMVEUAAAA5OTkAAABMTExERERmZmYzMzMyMjJOUl6NAAAACHRSTlMAwD9/cN9/QbTD42kAAABcSURBVDjLxZFBCgAhDMNs7w/2/o+1BFmQmBQE38aSNo0t1Q/60M8+aF5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0n4bWyX0wF2wygAAAABJRU5ErkJggg==");
       opacity: 0.05;
     }
-  </style>
+
+/* Hide A-Frame default UI buttons (these showed up as empty boxes on intro/waiting) */
+.a-enter-vr, .a-enter-ar, #a-enter-vr, #a-enter-ar,
+.a-fullscreen, #a-fullscreen {
+  display: none !important;
+}
+
+</style>
 <style>
   /* ===== UI: Elevator User Guide (2D overlay, outside the 3D scene) ===== */
   #elevatorGuide {
@@ -1080,7 +1087,7 @@ AFRAME.registerComponent('mixamo-mat-fix', {
 
       // Behavior tuning
       minTravel: { type: 'number', default: 2.4 },      // don't pick targets too close to current position
-      artBias: { type: 'number', default: 0.82 },       // chance to prefer true art stops over transit points
+      artBias: { type: 'number', default: 0.92 },       // chance to prefer true art stops over transit points
       artWaitMin: { type: 'number', default: 25.0 },
       artWaitMax: { type: 'number', default: 85.0 },
       meetWaitMin: { type: 'number', default: 8.0 },
@@ -1092,7 +1099,7 @@ AFRAME.registerComponent('mixamo-mat-fix', {
       // Waypoints
       waypoints: { type: 'string', default: '' },       // selector list "#wp1, #wp2, ..."
       meetSelector: { type: 'string', default: '' },
-      meetChance: { type: 'number', default: 0.22 },
+      meetChance: { type: 'number', default: 0.06 },
       meetCooldown: { type: 'number', default: 30.0 },
 
       // Collision-ish avoidance (lightweight; no navmesh)
@@ -1221,11 +1228,24 @@ AFRAME.registerComponent('mixamo-mat-fix', {
         this._extendClaim((this._waitT * 1000) + 4000);
 
         // Face the thing we arrived at.
-        if (dist > 0.001){
-          const desiredYaw = Math.atan2(dx, dz) * 180 / Math.PI;
-          this.el.setAttribute('rotation', {x: 0, y: desiredYaw, z: 0});
-        }
-        return;
+// If the waypoint has a data-lookat selector (e.g. a label/art plane), face that instead of the waypoint point.
+const lookSel = this._target && this._target.getAttribute && this._target.getAttribute('data-lookat');
+if (lookSel){
+  const lookEl = document.querySelector(lookSel);
+  if (lookEl && lookEl.object3D){
+    const tp = lookEl.object3D.getWorldPosition(new THREE.Vector3());
+    const mp = this.el.object3D.getWorldPosition(new THREE.Vector3());
+    const dx2 = (tp.x - mp.x), dz2 = (tp.z - mp.z);
+    if (Math.hypot(dx2, dz2) > 0.001){
+      const desiredYaw = Math.atan2(dx2, dz2) * 180 / Math.PI;
+      this.el.setAttribute('rotation', {x: 0, y: desiredYaw, z: 0});
+    }
+  }
+} else if (dist > 0.001){
+  const desiredYaw = Math.atan2(dx, dz) * 180 / Math.PI;
+  this.el.setAttribute('rotation', {x: 0, y: desiredYaw, z: 0});
+}
+return;
       }
 
       // Movement direction.
@@ -1296,10 +1316,13 @@ AFRAME.registerComponent('mixamo-mat-fix', {
 
     _refreshWaypoints: function(){
       const artSel = this.data.waypoints;
-      this._wpsArt = artSel ? Array.from(document.querySelectorAll(artSel)) : [];
+const base = artSel ? Array.from(document.querySelectorAll(artSel)) : [];
+// Auto-generated "stand in front of label/art" points
+const auto = Array.from(document.querySelectorAll('.wp.art.auto'));
+this._wpsArt = base.concat(auto);
 
-      const meetSel = this.data.meetSelector;
-      this._wpsMeet = meetSel ? Array.from(document.querySelectorAll(meetSel)) : [];
+const meetSel = this.data.meetSelector;
+this._wpsMeet = meetSel ? Array.from(document.querySelectorAll(meetSel)) : [];
     },
 
     _pickNextTarget: function(forceDifferent){
@@ -1330,27 +1353,77 @@ AFRAME.registerComponent('mixamo-mat-fix', {
         return;
       }
 
-      // Otherwise pick an art stop.
-      if (hasArt){
-        let chosen = null;
-        const artsOnly = this._wpsArt.filter(w => w && w.classList && w.classList.contains('art'));
-        const pool = (artsOnly.length && Math.random() < this.data.artBias) ? artsOnly : this._wpsArt;
-        for (let tries = 0; tries < 14; tries++){
-          const cand = pool[(Math.random() * pool.length) | 0];
-          if (!cand) continue;
-          if (current && cand === current) continue;
-          if (this._isClaimed(cand)) continue;
-          if (this._isCrowdedWaypoint(cand, this._wpKind(cand))) continue;
-          const p = cand.object3D.position;
-          const d = Math.hypot(p.x - myPos.x, p.z - myPos.z);
-          if (d < minD) continue;
-          chosen = cand; break;
-        }
-        if (!chosen && forceDifferent && hasMeet) chosen = this._wpsMeet[(Math.random() * this._wpsMeet.length) | 0];
-        this._target = chosen || this._wpsArt[0];
-        this._claimTarget(this._target, 25000);
-        return;
-      }
+      
+// Otherwise pick an art stop.
+if (hasArt){
+  const minD = this.data.minTravel;
+
+  // Build candidate list; prefer nearby targets most of the time, but sometimes pick something far.
+  const cands = [];
+  const artsOnly = this._wpsArt.filter(w => w && w.classList && w.classList.contains('art'));
+  const wantArt = (artsOnly.length && Math.random() < this.data.artBias);
+  const poolSrc = wantArt ? artsOnly : this._wpsArt;
+
+  for (const cand of poolSrc){
+    if (!cand) continue;
+    if (current && cand === current) continue;
+    if (this._isClaimed(cand)) continue;
+    const kind = this._wpKind(cand);
+    if (this._isCrowdedWaypoint(cand, kind)) continue;
+    const p = cand.object3D.position;
+    const d = Math.hypot(p.x - myPos.x, p.z - myPos.z);
+    if (d < minD) continue;
+    cands.push({el: cand, d});
+  }
+
+  let chosen = null;
+
+  if (cands.length){
+    cands.sort((a,b)=>a.d-b.d);
+    const n = cands.length;
+
+    // Pools: nearest 40% and farthest 35%
+    const nearN = Math.max(1, Math.floor(n * 0.40));
+    const farStart = Math.max(0, Math.floor(n * 0.65));
+
+    const preferNear = (Math.random() < 0.78);
+    const pool = preferNear ? cands.slice(0, nearN) : cands.slice(farStart);
+
+    // Weighted random (slightly favors closer inside the chosen pool)
+    let sum = 0;
+    for (const it of pool){
+      const w = 1 / Math.max(0.35, it.d);
+      it._w = w;
+      sum += w;
+    }
+    let r = Math.random() * sum;
+    for (const it of pool){
+      r -= it._w;
+      if (r <= 0){ chosen = it.el; break; }
+    }
+    if (!chosen) chosen = pool[pool.length-1].el;
+  }
+
+  // If we tried to be art-biased but got nothing, fall back to any waypoint.
+  if (!chosen && wantArt && poolSrc !== this._wpsArt){
+    for (const cand of this._wpsArt){
+      if (!cand) continue;
+      if (current && cand === current) continue;
+      if (this._isClaimed(cand)) continue;
+      const kind = this._wpKind(cand);
+      if (this._isCrowdedWaypoint(cand, kind)) continue;
+      const p = cand.object3D.position;
+      const d = Math.hypot(p.x - myPos.x, p.z - myPos.z);
+      if (d < minD) continue;
+      chosen = cand; break;
+    }
+  }
+
+  if (!chosen && forceDifferent && hasMeet) chosen = this._wpsMeet[(Math.random() * this._wpsMeet.length) | 0];
+  this._target = chosen || this._wpsArt[0];
+  this._claimTarget(this._target, 25000);
+  return;
+}
 
       // Fallback: only meet points exist.
       this._target = this._wpsMeet[0];
@@ -1740,7 +1813,7 @@ AFRAME.registerComponent('mixamo-mat-fix', {
 <!-- ===== END ERA ORA Intro / Loading UI ===== -->
 <div class="overlay grain"></div>
 <div aria-hidden="true" id="npcHud"></div>
-<a-scene background="color: #020202" fog="type: exponential; color: #050505; density: 0.00022" renderer="antialias: true; colorManagement: true; physicallyCorrectLights: true; exposure: 0.92; highRefreshRate: true;" s4-mercury-manager="" shadow="type: pcfsoft; autoUpdate: true;" tabindex="0" vr-mode-ui="enabled: false">
+<a-scene background="color: #020202" fog="type: exponential; color: #050505; density: 0.00022" renderer="antialias: true; colorManagement: true; physicallyCorrectLights: true; exposure: 0.92; highRefreshRate: true;" s4-mercury-manager="" shadow="type: pcfsoft; autoUpdate: true;" tabindex="0" vr-mode-ui="enabled: false" auto-art-waypoints>
 <a-assets>
 <video crossorigin="anonymous" id="fearVideo" loop="" muted="" playsinline="" preload="auto" webkit-playsinline="" tabindex="-1" disablepictureinpicture disableremoteplayback controlslist="nodownload noplaybackrate noremoteplayback">
 <source src="fear-room/video/test-video.mp4" type="video/mp4"/>
@@ -2436,7 +2509,177 @@ AFRAME.registerComponent('mixamo-mat-fix', {
         const EPS = 0.001;
 
         
-        AFRAME.registerComponent('screen-surface', {
+        
+
+// Auto-generate hidden "art stop" waypoints in front of label/art planes so NPCs can peruse them.
+AFRAME.registerComponent('auto-art-waypoints', {
+  schema: {
+    selector: { type: 'string', default: 'a-plane[id*="Label"], a-plane[id*="label"], a-entity[id*="Label"], a-entity[id*="label"]' },
+    offset: { type: 'number', default: 0.85 },
+    max: { type: 'int', default: 48 },
+    lookatMaxDist: { type: 'number', default: 2.6 }
+  },
+  init: function(){
+    this._done = false;
+    const run = () => {
+      if (this._done) return;
+      this._done = true;
+      this._makeAutoWaypoints();
+      this._decorateExistingArtWaypoints();
+    };
+    setTimeout(run, 50);
+    this.el.sceneEl && this.el.sceneEl.addEventListener('loaded', () => setTimeout(run, 50));
+  },
+
+  _makeAutoWaypoints: function(){
+    const scene = this.el.sceneEl || this.el;
+    const candidates = Array.from(scene.querySelectorAll(this.data.selector))
+      .filter(el => el && el.id && el.object3D)
+      .filter(el => !el.closest('#characters'));
+
+    let count = 0;
+    for (const t of candidates){
+      if (count >= this.data.max) break;
+      const wpId = `wp_auto_${t.id}`;
+      const escId = (window.CSS && CSS.escape) ? CSS.escape(wpId) : wpId.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+          if (scene.querySelector('#' + escId)) continue;
+
+      const obj = t.object3D;
+      obj.updateWorldMatrix(true, false);
+
+      const posW = new THREE.Vector3();
+      const quatW = new THREE.Quaternion();
+      obj.getWorldPosition(posW);
+      obj.getWorldQuaternion(quatW);
+
+      const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(quatW).normalize();
+      const wpW = posW.clone().add(forward.multiplyScalar(this.data.offset));
+      wpW.y = 0;
+
+      scene.object3D.worldToLocal(wpW);
+
+      const wp = document.createElement('a-entity');
+      wp.setAttribute('id', wpId);
+      wp.setAttribute('class', 'wp art auto');
+      wp.setAttribute('position', `${wpW.x.toFixed(2)} 0 ${wpW.z.toFixed(2)}`);
+      wp.setAttribute('visible', 'false');
+      wp.setAttribute('data-lookat', `#${t.id}`);
+      scene.appendChild(wp);
+      count++;
+    }
+  },
+
+  _decorateExistingArtWaypoints: function(){
+    const scene = this.el.sceneEl || this.el;
+    const labels = Array.from(scene.querySelectorAll('a-plane[id*="Label"], a-plane[id*="label"], a-entity[id*="Label"], a-entity[id*="label"]'))
+      .filter(el => el && el.id && el.object3D);
+
+    const wps = Array.from(scene.querySelectorAll('.wp.art'))
+      .filter(wp => wp && wp.object3D)
+      .filter(wp => !wp.classList.contains('auto'))
+      .filter(wp => !wp.getAttribute('data-lookat'));
+
+    for (const wp of wps){
+      const wpW = wp.object3D.getWorldPosition(new THREE.Vector3());
+      let best = null, bestD = 999;
+      for (const l of labels){
+        const p = l.object3D.getWorldPosition(new THREE.Vector3());
+        const d = Math.hypot(p.x - wpW.x, p.z - wpW.z);
+        if (d < bestD){ bestD = d; best = l; }
+      }
+      if (best && bestD <= this.data.lookatMaxDist){
+        wp.setAttribute('data-lookat', `#${best.id}`);
+      }
+    }
+  }
+});
+
+// Spread NPCs across the room on load (avoids clumping).
+AFRAME.registerComponent('npc-distributor', {
+  schema: {
+    spawnSelector: { type: 'string', default: '.wp.art, .wp.conn, .wp.center.conn, .wp.s3.conn, .wp.s4.conn, .wp.art.auto' },
+    minDist: { type: 'number', default: 3.0 },
+    jitter: { type: 'number', default: 0.35 }
+  },
+  init: function(){
+    const run = () => {
+      this._distribute();
+      setTimeout(() => this._distribute(), 350);
+      setTimeout(() => this._distribute(), 900);
+    };
+    setTimeout(run, 80);
+    this.el.sceneEl && this.el.sceneEl.addEventListener('loaded', () => setTimeout(run, 80));
+  },
+
+  _shuffle: function(arr){
+    for (let i = arr.length - 1; i > 0; i--){
+      const j = (Math.random() * (i + 1)) | 0;
+      const t = arr[i]; arr[i] = arr[j]; arr[j] = t;
+    }
+    return arr;
+  },
+
+  _distribute: function(){
+    const scene = this.el.sceneEl || document;
+    const npcs = Array.from(this.el.querySelectorAll('[npc-gallery-walker]'));
+    if (!npcs.length) return;
+
+    let spawns = Array.from(scene.querySelectorAll(this.data.spawnSelector))
+      .filter(w => w && w.object3D)
+      .filter(w => !(w.classList && w.classList.contains('meet')));
+
+    if (!spawns.length) return;
+    spawns = this._shuffle(spawns.slice());
+
+    const used = [];
+
+    const pickSpawn = () => {
+      let best = null, bestScore = -1;
+      for (const wp of spawns){
+        const p = wp.object3D.position;
+        if (!used.length) return wp;
+
+        let minD = 999;
+        for (const u of used){
+          const d = Math.hypot(p.x - u.x, p.z - u.z);
+          if (d < minD) minD = d;
+        }
+
+        if (minD >= this.data.minDist) return wp;
+        if (minD > bestScore){ bestScore = minD; best = wp; }
+      }
+      return best || spawns[0];
+    };
+
+    for (const npc of npcs){
+      const wp = pickSpawn();
+      if (!wp) continue;
+
+      const p = wp.object3D.position;
+      const j = this.data.jitter;
+      const x = p.x + (Math.random() * 2 - 1) * j;
+      const z = p.z + (Math.random() * 2 - 1) * j;
+
+      npc.setAttribute('position', `${x.toFixed(2)} 0 ${z.toFixed(2)}`);
+
+      let yaw = Math.random() * 360;
+      const lookSel = wp.getAttribute && wp.getAttribute('data-lookat');
+      if (lookSel){
+        const lookEl = document.querySelector(lookSel);
+        if (lookEl && lookEl.object3D){
+          const lp = lookEl.object3D.getWorldPosition(new THREE.Vector3());
+          const np = npc.object3D.getWorldPosition(new THREE.Vector3());
+          yaw = Math.atan2((lp.x - np.x), (lp.z - np.z)) * 180 / Math.PI;
+        }
+      }
+      npc.setAttribute('rotation', `0 ${yaw.toFixed(1)} 0`);
+
+      used.push({x, z});
+    }
+  }
+});
+
+AFRAME.registerComponent('screen-surface', {
           /**
            * Drives the projection surface as a self-lit PBR screen,
            * with an optional lightweight "grade" (contrast/brightness/saturation)
@@ -4970,29 +5213,29 @@ AFRAME.registerComponent('pbr-carpet', {
 <a-entity class="wp center conn" id="wp_c2" position="8.80 0 16.00"></a-entity>
 </a-entity>
 <!-- ===== CHARACTERS (single instance each; idle/walk swap) ===== -->
-<a-entity id="characters">
+<a-entity id="characters" npc-distributor>
 <!-- KATE (moved away from Station 3; low meet chance) -->
-<a-entity hide-placeholder-when-ready="" id="CHAR_KATE" npc-gallery-walker="name: KATE; speed: 0.85; minTravel: 2.2; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_exit, #wp_s3_mid, #wp_s3_mid2, #wp_s4_entry, #wp_s4_mid, #wp_s4_dc, #wp_s3_a1, #wp_s3_a2, #wp_s3_c1, #wp_s3_c2, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_back; meetSelector: .meet; meetChance: 0.05; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; meetWaitMin: 8; meetWaitMax: 20; modelYaw: 0" npc-uniform-scale="height: 1.72" position="8.80 0 16.00" rotation="0 180 0">
+<a-entity hide-placeholder-when-ready="" id="CHAR_KATE" npc-gallery-walker="name: KATE; speed: 0.85; minTravel: 2.2; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_exit, #wp_s3_mid, #wp_s3_mid2, #wp_s4_entry, #wp_s4_mid, #wp_s4_dc, #wp_s3_a1, #wp_s3_a2, #wp_s3_c1, #wp_s3_c2, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_back; meetSelector: .meet; meetChance: 0.05; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; meetWaitMin: 8; meetWaitMax: 20; modelYaw: 0; artBias: 0.92;" npc-uniform-scale="height: 1.72" position="8.80 0 16.00" rotation="0 180 0">
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/kate_idle.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18"></a-entity>
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/kate_walk.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18" visible="false"></a-entity>
 </a-entity>
 <!-- FRANK (keeps Station 3, but has an exit waypoint so he doesn't get trapped) -->
-<a-entity hide-placeholder-when-ready="" id="CHAR_FRANK" npc-gallery-walker="name: FRANK; speed: 0.90; minTravel: 2.2; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_exit, #wp_s3_mid, #wp_s3_mid2, #wp_s4_entry, #wp_s4_mid, #wp_s4_dc, #wp_s3_a1, #wp_s3_a2, #wp_s3_c1, #wp_s3_c2, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_back; meetSelector: .meet; meetChance: 0.05; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; meetWaitMin: 8; meetWaitMax: 20; modelYaw: 0" npc-uniform-scale="height: 1.72" position="15.10 0 15.40" rotation="0 180 0">
+<a-entity hide-placeholder-when-ready="" id="CHAR_FRANK" npc-gallery-walker="name: FRANK; speed: 0.90; minTravel: 2.2; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_exit, #wp_s3_mid, #wp_s3_mid2, #wp_s4_entry, #wp_s4_mid, #wp_s4_dc, #wp_s3_a1, #wp_s3_a2, #wp_s3_c1, #wp_s3_c2, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_back; meetSelector: .meet; meetChance: 0.05; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; meetWaitMin: 8; meetWaitMax: 20; modelYaw: 0; artBias: 0.92;" npc-uniform-scale="height: 1.72" position="15.10 0 15.40" rotation="0 180 0">
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/Frank_Idle.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18"></a-entity>
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/frank_walk.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18" visible="false"></a-entity>
 </a-entity>
 <!-- LOUISE (connector + Station 4; avoids Station 3) -->
-<a-entity hide-placeholder-when-ready="" id="CHAR_LOUISE" npc-gallery-walker="name: LOUISE; speed: 0.88; minTravel: 2.2; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_exit, #wp_s3_mid, #wp_s3_mid2, #wp_s4_entry, #wp_s4_mid, #wp_s4_dc, #wp_s3_a1, #wp_s3_a2, #wp_s3_c1, #wp_s3_c2, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_back; meetSelector: .meet; meetChance: 0.05; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; meetWaitMin: 8; meetWaitMax: 20; modelYaw: 0" npc-uniform-scale="height: 1.72" position="12.20 0 19.60" rotation="0 210 0">
+<a-entity hide-placeholder-when-ready="" id="CHAR_LOUISE" npc-gallery-walker="name: LOUISE; speed: 0.88; minTravel: 2.2; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_exit, #wp_s3_mid, #wp_s3_mid2, #wp_s4_entry, #wp_s4_mid, #wp_s4_dc, #wp_s3_a1, #wp_s3_a2, #wp_s3_c1, #wp_s3_c2, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_back; meetSelector: .meet; meetChance: 0.05; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; meetWaitMin: 8; meetWaitMax: 20; modelYaw: 0; artBias: 0.92;" npc-uniform-scale="height: 1.72" position="12.20 0 19.60" rotation="0 210 0">
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/louise_idle.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18"></a-entity>
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/louise_walk.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18" visible="false"></a-entity>
 </a-entity>
 <!-- JAMES (Station 4 loop; material fixed so no inside/backface view) -->
-<a-entity hide-placeholder-when-ready="" id="CHAR_JAMES" npc-gallery-walker="name: JAMES; speed: 1.00; minTravel: 2.2; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_exit, #wp_s3_mid, #wp_s3_mid2, #wp_s4_entry, #wp_s4_mid, #wp_s4_dc, #wp_s3_a1, #wp_s3_a2, #wp_s3_c1, #wp_s3_c2, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_back; meetSelector: .meet; meetChance: 0.05; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; meetWaitMin: 8; meetWaitMax: 20; modelYaw: 0" npc-uniform-scale="height: 1.72" position="8.20 0 24.00" rotation="0 90 0">
+<a-entity hide-placeholder-when-ready="" id="CHAR_JAMES" npc-gallery-walker="name: JAMES; speed: 1.00; minTravel: 2.2; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_exit, #wp_s3_mid, #wp_s3_mid2, #wp_s4_entry, #wp_s4_mid, #wp_s4_dc, #wp_s3_a1, #wp_s3_a2, #wp_s3_c1, #wp_s3_c2, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_back; meetSelector: .meet; meetChance: 0.05; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; meetWaitMin: 8; meetWaitMax: 20; modelYaw: 0; artBias: 0.92;" npc-uniform-scale="height: 1.72" position="8.20 0 24.00" rotation="0 90 0">
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/James_idle.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18"></a-entity>
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/James_walk.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18" visible="false"></a-entity>
 </a-entity>
-<a-entity hide-placeholder-when-ready="" id="CHAR_LEO" npc-gallery-walker="name: LEO; speed: 0.92; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_mid, #wp_s3_mid2, #wp_s3_exit, #wp_s4_entry, #wp_s4_mid, #wp_s4_back, #wp_s4_dc, #wp_s3_a1, #wp_s3_a2, #wp_s3_c1, #wp_s3_c2, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_dc; meetSelector: .meet; meetChance: 0.05; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; modelYaw: 0" npc-uniform-scale="height: 1.74" position="10.60 0 13.20" rotation="0 -90 0">
-<a-entity animation-mixer="clip: *; loop: repeat" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/leo_idle.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0"></a-entity><a-entity animation-mixer="clip: *; loop: repeat" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/leo_walk.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0" visible="false"></a-entity></a-entity><a-entity hide-placeholder-when-ready="" id="CHAR_SUZIE" npc-gallery-walker="name: SUZIE; speed: 0.86; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_mid, #wp_s3_mid2, #wp_s3_exit, #wp_s4_entry, #wp_s4_mid, #wp_s4_back, #wp_s4_dc, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_dc, #wp_s4_entry; meetSelector: .meet; meetChance: 0.04; meetCooldown: 90; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; modelYaw: 0" npc-uniform-scale="height: 1.68" position="7.00 0 24.20" rotation="0 160 0">
+<a-entity hide-placeholder-when-ready="" id="CHAR_LEO" npc-gallery-walker="name: LEO; speed: 0.92; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_mid, #wp_s3_mid2, #wp_s3_exit, #wp_s4_entry, #wp_s4_mid, #wp_s4_back, #wp_s4_dc, #wp_s3_a1, #wp_s3_a2, #wp_s3_c1, #wp_s3_c2, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_dc; meetSelector: .meet; meetChance: 0.05; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; modelYaw: 0; artBias: 0.92; meetWaitMin: 5; meetWaitMax: 12;" npc-uniform-scale="height: 1.74" position="10.60 0 13.20" rotation="0 -90 0">
+<a-entity animation-mixer="clip: *; loop: repeat" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/leo_idle.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0"></a-entity><a-entity animation-mixer="clip: *; loop: repeat" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/leo_walk.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0" visible="false"></a-entity></a-entity><a-entity hide-placeholder-when-ready="" id="CHAR_SUZIE" npc-gallery-walker="name: SUZIE; speed: 0.86; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_mid, #wp_s3_mid2, #wp_s3_exit, #wp_s4_entry, #wp_s4_mid, #wp_s4_back, #wp_s4_dc, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_dc, #wp_s4_entry; meetSelector: .meet; meetChance: 0.04; meetCooldown: 90; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; modelYaw: 0; artBias: 0.92; meetWaitMin: 5; meetWaitMax: 12;" npc-uniform-scale="height: 1.68" position="7.00 0 24.20" rotation="0 160 0">
 <a-entity animation-mixer="clip: *; loop: repeat" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/suzie_idle.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0"></a-entity><a-entity animation-mixer="clip: *; loop: repeat" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/suzie_walk.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0" visible="false"></a-entity></a-entity>
 </a-entity>
 <!-- ===== END CHARACTERS ===== -->
