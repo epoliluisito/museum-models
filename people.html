@@ -807,7 +807,6 @@ AFRAME.registerComponent('light-beam', {
     'KATE idle','KATE walk',
     'LEO idle','LEO walk',
     'SUZIE idle','SUZIE walk',
-    'GIONNI idle','GIONNI walk'
   ];
 
   function ensureHud(){
@@ -907,8 +906,8 @@ AFRAME.registerComponent('light-beam', {
 AFRAME.registerComponent('npc-uniform-scale', {
   schema: {
     height: { type: 'number', default: 1.72 },
-    minScale: { type: 'number', default: 0.25 },
-    maxScale: { type: 'number', default: 2.5 }
+    minScale: { type: 'number', default: 0.2 },
+    maxScale: { type: 'number', default: 1.0 }
   },
   init: function(){
     const el = this.el;
@@ -1047,10 +1046,6 @@ AFRAME.registerComponent('mixamo-mat-fix', {
 
           m.needsUpdate = true;
         });
-      });
-    });
-  }
-});
 
   // --- NPC simple gallery walker ----------------------------------------
   // One entity "exists once"; children hold idle + walk models. We toggle visibility.
@@ -4985,8 +4980,8 @@ AFRAME.registerComponent('pbr-carpet', {
 </a-entity>
 <a-entity hide-placeholder-when-ready="" id="CHAR_LEO" npc-gallery-walker="name: LEO; speed: 0.92; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_mid, #wp_s3_mid2, #wp_s3_exit, #wp_s4_entry, #wp_s4_mid, #wp_s4_back, #wp_s4_dc, #wp_s3_a1, #wp_s3_a2, #wp_s3_c1, #wp_s3_c2, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_dc; meetSelector: .meet; meetChance: 0.05; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; modelYaw: 0" npc-uniform-scale="height: 1.74" position="10.60 0 13.20" rotation="0 -90 0">
 <a-entity animation-mixer="clip: *; loop: repeat" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/leo_idle.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0"></a-entity><a-entity animation-mixer="clip: *; loop: repeat" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/leo_walk.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0" visible="false"></a-entity></a-entity><a-entity hide-placeholder-when-ready="" id="CHAR_SUZIE" npc-gallery-walker="name: SUZIE; speed: 0.86; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_mid, #wp_s3_mid2, #wp_s3_exit, #wp_s4_entry, #wp_s4_mid, #wp_s4_back, #wp_s4_dc, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_dc, #wp_s4_entry; meetSelector: .meet; meetChance: 0.04; meetCooldown: 90; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; modelYaw: 0" npc-uniform-scale="height: 1.68" position="7.00 0 24.20" rotation="0 160 0">
-<a-entity animation-mixer="clip: *; loop: repeat" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/suzie_idle.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0"></a-entity><a-entity animation-mixer="clip: *; loop: repeat" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/suzie_walk.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0" visible="false"></a-entity></a-entity><a-entity hide-placeholder-when-ready="" id="CHAR_GIONNI" npc-gallery-walker="name: GIONNI; speed: 0.98; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_mid, #wp_s3_mid2, #wp_s3_exit, #wp_s4_entry, #wp_s4_mid, #wp_s4_back, #wp_s4_dc, #wp_s3_a1, #wp_s3_a2, #wp_s3_c1, #wp_s3_c2; meetSelector: .meet; meetChance: 0.05; meetCooldown: 85; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; modelYaw: 0" npc-uniform-scale="height: 0.86" position="14.40 0 8.10" rotation="0 20 0">
-<a-entity animation-mixer="clip: *; loop: repeat" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/gionni_idle.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0"></a-entity><a-entity animation-mixer="clip: *; loop: repeat" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/gionni_walk.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0" visible="false"></a-entity></a-entity></a-entity>
+<a-entity animation-mixer="clip: *; loop: repeat" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/suzie_idle.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0"></a-entity><a-entity animation-mixer="clip: *; loop: repeat" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/suzie_walk.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0" visible="false"></a-entity></a-entity>
+</a-entity>
 <!-- ===== END CHARACTERS ===== -->
 </a-scene>
 <script>
