@@ -399,37 +399,49 @@ AFRAME.registerComponent('light-beam', {
 <style>
     html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden; }
 
-  /* Hide native video UI (Chrome sometimes shows empty control bars over background videos) */
-  #introVideoStage video, #fearVideo { pointer-events: none !important; }
-  video::-webkit-media-controls,
-  video::-webkit-media-controls-enclosure,
-  video::-webkit-media-controls-panel,
-  video::-webkit-media-controls-overlay-play-button,
-  video::-webkit-media-controls-start-playback-button,
-  video::-webkit-media-controls-timeline,
-  video::-webkit-media-controls-current-time-display,
-  video::-webkit-media-controls-time-remaining-display,
-  video::-webkit-media-controls-mute-button,
-  video::-webkit-media-controls-volume-slider,
-  video::-webkit-media-controls-fullscreen-button {
-    display: none !important;
-    -webkit-appearance: none !important;
-  }
+  /* Hide native video UI (Chrome can show blank control bars over autoplaying videos) */
+#introVideoStage video, #fearVideo { 
+  pointer-events: none !important;
+  outline: none !important;
+}
 
-    
-    
-  /* Extra Chrome internal media control overlays (appear as blank rounded bars) */
-  video::-internal-media-controls-overlay-cast-button,
-  video::-internal-media-controls-overlay-play-button,
-  video::-internal-media-controls-download-button,
-  video::-internal-media-controls-text-track-list,
-  video::-internal-media-controls-volume-slider,
-  video::-internal-media-controls-timeline,
-  video::-internal-media-controls-time-remaining-display,
-  video::-internal-media-controls-current-time-display {
-    display: none !important;
-  }
-  video{ outline: none !important; }
+video::-webkit-media-controls,
+video::-webkit-media-controls-enclosure,
+video::-webkit-media-controls-panel,
+video::-webkit-media-controls-overlay-play-button,
+video::-webkit-media-controls-start-playback-button,
+video::-webkit-media-controls-play-button,
+video::-webkit-media-controls-timeline,
+video::-webkit-media-controls-current-time-display,
+video::-webkit-media-controls-time-remaining-display,
+video::-webkit-media-controls-mute-button,
+video::-webkit-media-controls-volume-slider,
+video::-webkit-media-controls-fullscreen-button {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  -webkit-appearance: none !important;
+}
+
+/* Extra Chrome internal media control overlays (appear as blank rounded bars) */
+video::-internal-media-controls-overlay-cast-button,
+video::-internal-media-controls-overlay-play-button,
+video::-internal-media-controls-download-button,
+video::-internal-media-controls-text-track-list,
+video::-internal-media-controls-volume-slider,
+video::-internal-media-controls-timeline,
+video::-internal-media-controls-time-remaining-display,
+video::-internal-media-controls-current-time-display {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+}
+
+video {
+  outline: none !important;
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
 /* UI Hint */
     #hint {
       position: fixed; left: 12px; bottom: 12px; z-index: 20;
@@ -1689,10 +1701,10 @@ AFRAME.registerComponent('mixamo-mat-fix', {
 </div>
 <div aria-hidden="true" class="mode-waiting" id="introScreen">
 <div id="introVideoStage">
-<video crossorigin="anonymous" id="introWaiting" loop="" muted="" playsinline="" preload="auto" webkit-playsinline="" tabindex="-1" disablepictureinpicture disableremoteplayback controlslist="nodownload noplaybackrate noremoteplayback">
+<video crossorigin="anonymous" id="introWaiting" loop="" muted="" playsinline="" preload="metadata" webkit-playsinline="" tabindex="-1" disablepictureinpicture disableremoteplayback controlslist="nodownload noplaybackrate noremoteplayback">
 <source src="fear-room/video/Waiting.mp4" type="video/mp4"/>
 </video>
-<video crossorigin="anonymous" id="introWalking" muted="" playsinline="" preload="auto" webkit-playsinline="" tabindex="-1" disablepictureinpicture disableremoteplayback controlslist="nodownload noplaybackrate noremoteplayback">
+<video crossorigin="anonymous" id="introWalking" muted="" playsinline="" preload="none" webkit-playsinline="" tabindex="-1" disablepictureinpicture disableremoteplayback controlslist="nodownload noplaybackrate noremoteplayback">
 <source src="fear-room/video/Walking%20in.mp4" type="video/mp4"/>
 </video>
 </div>
@@ -1742,7 +1754,7 @@ AFRAME.registerComponent('mixamo-mat-fix', {
 <div aria-hidden="true" id="npcHud"></div>
 <a-scene background="color: #020202" fog="type: exponential; color: #050505; density: 0.00022" renderer="antialias: true; colorManagement: true; physicallyCorrectLights: true; exposure: 0.92; highRefreshRate: true;" s4-mercury-manager="" shadow="type: pcfsoft; autoUpdate: true;" tabindex="0" vr-mode-ui="enabled: false">
 <a-assets>
-<video crossorigin="anonymous" id="fearVideo" loop="" muted="" playsinline="" preload="auto" webkit-playsinline="" tabindex="-1" disablepictureinpicture disableremoteplayback controlslist="nodownload noplaybackrate noremoteplayback">
+<video crossorigin="anonymous" id="fearVideo" loop="" muted="" playsinline="" preload="none" webkit-playsinline="" tabindex="-1" disablepictureinpicture disableremoteplayback controlslist="nodownload noplaybackrate noremoteplayback">
 <source src="fear-room/video/test-video.mp4" type="video/mp4"/>
 </video>
 <audio crossorigin="anonymous" id="fearRoomMusic" loop="" preload="auto">
@@ -5478,7 +5490,12 @@ AFRAME.registerComponent('pbr-carpet', {
 
     function add(p) {
       total++;
-      tasks.push(Promise.resolve(p).then(bump, bump));
+      // Never allow a single slow/blocked asset to freeze the boot screen forever.
+      const wrapped = Promise.race([
+        Promise.resolve(p),
+        new Promise((res) => setTimeout(res, 8000))
+      ]);
+      tasks.push(wrapped.then(bump, bump));
     }
 
     const scene = document.querySelector('a-scene');
@@ -5527,7 +5544,7 @@ AFRAME.registerComponent('pbr-carpet', {
       });
     }
 
-    [WAITING, WALKING].forEach(v => {
+    [WAITING].forEach(v => {
       if (!v) return;
       add(new Promise((res) => {
         if (v.readyState >= 2) return res();
@@ -5568,7 +5585,8 @@ AFRAME.registerComponent('pbr-carpet', {
 
   setAudioEnabled(false);
 
-  buildLoadTasks().then(showIntro).catch(showIntro);
+  const __bootFailSafe = setTimeout(showIntro, 12000);
+  buildLoadTasks().then(() => { clearTimeout(__bootFailSafe); showIntro(); }).catch(() => { clearTimeout(__bootFailSafe); showIntro(); });
 })();
 </script>
 </body>
