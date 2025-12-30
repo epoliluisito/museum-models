@@ -450,7 +450,7 @@ AFRAME.registerComponent('light-beam', {
     }
   
   /* Hide legacy debug/quit UI boxes */
-  #quitShell, #npcHud { display: none !important; }
+  #npcHud { display: none !important; }
 </style>
 <style>
   /* ===== UI: Elevator User Guide (2D overlay, outside the 3D scene) ===== */
@@ -702,6 +702,51 @@ AFRAME.registerComponent('light-beam', {
   }
   #beginBtn:hover{ background: rgba(255,255,255,0.18); border-color: rgba(255,255,255,0.35); }
   #beginBtn:active{ transform: translateY(1px); }
+  /* Skip Intro (only during walking video) */
+  #skipIntroShell{
+    position: absolute;
+    left: 50%;
+    bottom: 18px;
+    transform: translateX(-50%) translateY(6px);
+    z-index: 160;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 260ms ease, transform 260ms ease;
+  }
+  #introScreen.mode-walking #skipIntroShell{
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(-50%) translateY(0);
+  }
+  #introScreen.fade-to-room #skipIntroShell{
+    opacity: 0;
+    pointer-events: none;
+  }
+  #skipIntroBtn{
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: rgba(255,255,255,0.92);
+    font-weight: 800;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    font-size: 12px;
+    cursor: pointer;
+    user-select: none;
+    text-decoration: underline;
+    text-underline-offset: 6px;
+    text-decoration-thickness: 1px;
+    opacity: 0.92;
+    transition: opacity 140ms ease, transform 120ms ease;
+  }
+  #skipIntroBtn:hover{ opacity: 1; }
+  #skipIntroBtn:active{ transform: translateY(1px); }
+  #skipIntroBtn:focus-visible{
+    outline: 2px solid rgba(255,255,255,0.22);
+    outline-offset: 8px;
+    border-radius: 10px;
+  }
+
 
   /* Quit UI */
   #quitShell{
@@ -1191,12 +1236,13 @@ AFRAME.registerComponent('mixamo-mat-fix', {
       this._setState('idle');
 
       // External reset hook (used by npc-spawn-spread).
-      this.el.addEventListener('npc-reset', () => {
+      this.el.addEventListener('npc-reset', (e) => {
         this._releaseClaim();
         this._target = null;
         this._blockedT = 0;
         this._stuckT = 0;
-        this._waitT = this._rand(0.2, 1.4);
+        const w = (e && e.detail && (typeof e.detail.wait === 'number')) ? e.detail.wait : null;
+        this._waitT = (w !== null) ? Math.max(0.2, w) : this._rand(8.0, 24.0);
         this._setState('idle');
       });
     },
@@ -1399,7 +1445,7 @@ AFRAME.registerComponent('mixamo-mat-fix', {
       if (hasArt){
         let chosen = null;
         const artsOnly = this._wpsArt.filter(w => w && w.classList && w.classList.contains('art'));
-        const pool = (artsOnly.length && Math.random() < this.data.artBias) ? artsOnly : this._wpsArt;
+        const pool = artsOnly.length ? artsOnly : this._wpsArt;
         for (let tries = 0; tries < 14; tries++){
           const cand = pool[(Math.random() * pool.length) | 0];
           if (!cand) continue;
@@ -1889,7 +1935,7 @@ const far = this.data.avoidDist;
           }
 
           // Reset walker so it starts roaming from the new spot.
-          npc.emit('npc-reset');
+          npc.emit('npc-reset', {wait: 12 + Math.random()*22});
         }
       };
 
@@ -1917,6 +1963,7 @@ const far = this.data.avoidDist;
 <li><strong>Interact:</strong> Press <span class="keycap">E</span> to activate the elevator</li>
 <li><strong>Elevator:</strong> Press <span class="keycap">E</span> to open/close doors</li>
 </ul>
+<p class="muted" id="elevatorChoice">By entering the elevator you choose to access the next level.</p>
 <p class="muted">Step back to dismiss this guide.</p>
 </div>
 <!-- ===== END UI OVERLAY ===== -->
@@ -1965,6 +2012,9 @@ const far = this.data.avoidDist;
 <div id="audioStatus">Audio: <strong>OFF</strong> — press <span class="keycap">ENTER</span> to enable</div>
 <button id="beginBtn" type="button">BEGIN</button>
 </div>
+</div>
+<div id="skipIntroShell" aria-hidden="true">
+  <div id="skipIntroBtn" role="button" tabindex="0" aria-label="Skip intro">SKIP INTRO</div>
 </div>
 </div>
 <div id="quitShell">
@@ -5558,7 +5608,7 @@ AFRAME.registerComponent('pbr-carpet', {
     // Open message (shown when doors open; hidden when doors close)
     if (doorL) {
       doorL.addEventListener('elevator1-open', () => {
-        showElevatorHint("Elevator open — by entering the elevator you can choose to access the next level.");
+        /* No on-screen hint here; message is shown in the USER GUIDE overlay. */
       });
       doorL.addEventListener('elevator1-close', () => {
         hideElevatorHint();
@@ -5589,6 +5639,7 @@ AFRAME.registerComponent('pbr-carpet', {
   const WAITING = document.getElementById('introWaiting');
   const WALKING = document.getElementById('introWalking');
   const BEGIN = document.getElementById('beginBtn');
+  const SKIP_INTRO = document.getElementById('skipIntroBtn');
   const AUDIO_STATUS = document.getElementById('audioStatus');
 
   const QUIT = document.getElementById('quitBtn');
@@ -5851,6 +5902,10 @@ AFRAME.registerComponent('pbr-carpet', {
   }, { passive: true });
 
   if (BEGIN) BEGIN.addEventListener('click', () => startWalkingVideo());
+  if (SKIP_INTRO) SKIP_INTRO.addEventListener('click', () => fadeIntoRoom());
+  SKIP_INTRO.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fadeIntoRoom(); }
+  });
 
   if (QUIT) QUIT.addEventListener('click', openQuitConfirm);
   if (Q_CANCEL) Q_CANCEL.addEventListener('click', closeQuitConfirm);
