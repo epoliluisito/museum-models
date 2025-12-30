@@ -2330,7 +2330,7 @@ const far = this.data.avoidDist;
 <!-- Station 5D: plinth + phone pile (under Accountability) -->
 <a-box class="collider" depth="0.6" height="0.4" id="station5_D_accountability_plinth" material="shader: standard; color: #0b0b0b; roughness: 0.85; metalness: 0.08" position="20.15 0.2 29.55" shadow="cast: true; receive: true" width="2.6">
 </a-box>
-<a-box class="collider" depth="0.8" height="0.32" id="station5_D_phone_pile_collider" material="opacity: 0; transparent: true" position="20.15 0.56 29.55" shadow="cast: false; receive: false" width="2.3">
+<a-box class="collider" depth="0.8" height="0.32" id="station5_D_phone_pile_collider" material="opacity: 0; transparent: true; depthWrite: false; depthTest: false" position="20.15 0.56 29.55" shadow="cast: false; receive: false" width="2.3">
 </a-box>
 <a-entity id="station5_D_phone_pile" position="20.15 0.4 29.55" rotation="0 180 0">
 <!-- phone bundle: flat phones stacked into a compact mound on the plinth surface -->
@@ -2473,14 +2473,14 @@ const far = this.data.avoidDist;
 <a-plane height="2.4" id="Wall2_panel" material="shader: standard; src: #Wall2Tex; transparent: true; opacity: 1; alphaTest: 0.01; color: #ffffff; emissive: #ffffff; emissiveMap: #Wall2Tex; emissiveIntensity: 2.2; roughness: 1; metalness: 0; side: double; depthWrite: false; depthTest: true; polygonOffset: true; polygonOffsetFactor: -4; polygonOffsetUnits: -4" position="17.93 1.85 3.00" rotation="0 -90 0" width="3.6">
 </a-plane>
 <!-- Corridor LEFT wall: invisible collider + 2 one-sided skins (concrete inside, dark outside) -->
-<a-box class="collider" depth="8" height="2.2" material="opacity: 0; transparent: true" position="7.44 1.1 -4" width="0.12"></a-box>
+<a-box class="collider" depth="8" height="2.2" material="opacity: 0; transparent: true; depthWrite: false; depthTest: false" position="7.44 1.1 -4" width="0.12"></a-box>
 <!-- inside face (visible only from corridor) -->
 <a-plane height="2.2" material="side: front" mixin="matConcreteWallsCeiling" position="7.50 1.1 -4" rotation="0 90 0" width="8"></a-plane>
 <!-- outside face (visible only from main room side) -->
 <a-plane height="2.2" material="color: #111; roughness: 0.7; metalness: 0.2; receiveShadow: true; side: front" position="7.38 1.1 -4" rotation="0 -90 0" width="8"></a-plane>
 <!-- Corridor start walls (ONLY these two corridor walls use concrete) -->
 <!-- Corridor RIGHT wall: invisible collider + 2 one-sided skins (concrete inside, dark outside) -->
-<a-box class="collider" depth="8" height="2.2" id="corridor_start_wall" material="opacity: 0; transparent: true" position="10.56 1.1 -4" width="0.12"></a-box>
+<a-box class="collider" depth="8" height="2.2" id="corridor_start_wall" material="opacity: 0; transparent: true; depthWrite: false; depthTest: false" position="10.56 1.1 -4" width="0.12"></a-box>
 <!-- inside face (visible only from corridor) -->
 <a-plane height="2.2" material="side: front" mixin="matConcreteWallsCeiling" position="10.50 1.1 -4" rotation="0 -90 0" width="8"></a-plane>
 <!-- outside face (visible only from main room side) -->
@@ -5420,32 +5420,32 @@ AFRAME.registerComponent('pbr-carpet', {
 <a-entity id="characters" npc-spawn-spread="">
 <!-- KATE (moved away from Station 3; low meet chance) -->
 <a-entity hide-placeholder-when-ready="" id="CHAR_KATE" npc-gallery-walker="name: KATE; speed: 0.85; minTravel: 2.2; waypoints: .wp:not(.meet); meetSelector: .meet; meetChance: 0.02; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; meetWaitMin: 8; meetWaitMax: 20; modelYaw: 0" npc-uniform-scale="height: 1.72" position="8.80 0 16.00" rotation="0 180 0">
-<a-box class="collider npc-collider" width="0.78" depth="0.78" height="1.85" position="0 0.92 0" material="opacity: 0; transparent: true"></a-box>
+<a-box class="collider npc-collider" width="0.78" depth="0.78" height="1.85" position="0 0.92 0" material="opacity: 0; transparent: true; depthWrite: false; depthTest: false"></a-box>
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/kate_idle.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18"></a-entity>
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/kate_walk.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18" visible="false"></a-entity>
 </a-entity>
 <!-- FRANK (keeps Station 3, but has an exit waypoint so he doesn't get trapped) -->
 <a-entity hide-placeholder-when-ready="" id="CHAR_FRANK" npc-gallery-walker="name: FRANK; speed: 0.90; minTravel: 2.2; waypoints: .wp:not(.meet); meetSelector: .meet; meetChance: 0.02; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; meetWaitMin: 8; meetWaitMax: 20; modelYaw: 0" npc-uniform-scale="height: 1.72" position="15.10 0 15.40" rotation="0 180 0">
-<a-box class="collider npc-collider" width="0.78" depth="0.78" height="1.85" position="0 0.92 0" material="opacity: 0; transparent: true"></a-box>
+<a-box class="collider npc-collider" width="0.78" depth="0.78" height="1.85" position="0 0.92 0" material="opacity: 0; transparent: true; depthWrite: false; depthTest: false"></a-box>
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/Frank_Idle.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18"></a-entity>
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/frank_walk.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18" visible="false"></a-entity>
 </a-entity>
 <!-- LOUISE (connector + Station 4; avoids Station 3) -->
 <a-entity hide-placeholder-when-ready="" id="CHAR_LOUISE" npc-gallery-walker="name: LOUISE; speed: 0.88; minTravel: 2.2; waypoints: .wp:not(.meet); meetSelector: .meet; meetChance: 0.02; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; meetWaitMin: 8; meetWaitMax: 20; modelYaw: 0" npc-uniform-scale="height: 1.72" position="12.20 0 19.60" rotation="0 210 0">
-<a-box class="collider npc-collider" width="0.78" depth="0.78" height="1.85" position="0 0.92 0" material="opacity: 0; transparent: true"></a-box>
+<a-box class="collider npc-collider" width="0.78" depth="0.78" height="1.85" position="0 0.92 0" material="opacity: 0; transparent: true; depthWrite: false; depthTest: false"></a-box>
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/louise_idle.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18"></a-entity>
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/louise_walk.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18" visible="false"></a-entity>
 </a-entity>
 <!-- JAMES (Station 4 loop; material fixed so no inside/backface view) -->
 <a-entity hide-placeholder-when-ready="" id="CHAR_JAMES" npc-gallery-walker="name: JAMES; speed: 1.00; minTravel: 2.2; waypoints: .wp:not(.meet); meetSelector: .meet; meetChance: 0.02; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; meetWaitMin: 8; meetWaitMax: 20; modelYaw: 0" npc-uniform-scale="height: 1.72" position="8.20 0 24.00" rotation="0 90 0">
-<a-box class="collider npc-collider" width="0.78" depth="0.78" height="1.85" position="0 0.92 0" material="opacity: 0; transparent: true"></a-box>
+<a-box class="collider npc-collider" width="0.78" depth="0.78" height="1.85" position="0 0.92 0" material="opacity: 0; transparent: true; depthWrite: false; depthTest: false"></a-box>
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/James_idle.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18"></a-entity>
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/James_walk.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18" visible="false"></a-entity>
 </a-entity>
 <a-entity hide-placeholder-when-ready="" id="CHAR_LEO" npc-gallery-walker="name: LEO; speed: 0.92; waypoints: .wp:not(.meet); meetSelector: .meet; meetChance: 0.02; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; modelYaw: 0" npc-uniform-scale="height: 1.74" position="10.60 0 13.20" rotation="0 -90 0">
-<a-box class="collider npc-collider" width="0.78" depth="0.78" height="1.85" position="0 0.92 0" material="opacity: 0; transparent: true"></a-box>
+<a-box class="collider npc-collider" width="0.78" depth="0.78" height="1.85" position="0 0.92 0" material="opacity: 0; transparent: true; depthWrite: false; depthTest: false"></a-box>
 <a-entity animation-mixer="clip: *; loop: repeat" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/leo_idle.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0"></a-entity><a-entity animation-mixer="clip: *; loop: repeat" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/leo_walk.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0" visible="false"></a-entity></a-entity><a-entity hide-placeholder-when-ready="" id="CHAR_SUZIE" npc-gallery-walker="name: SUZIE; speed: 0.86; waypoints: .wp:not(.meet); meetSelector: .meet; meetChance: 0.02; meetCooldown: 90; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; modelYaw: 0" npc-uniform-scale="height: 1.68" position="7.00 0 24.20" rotation="0 160 0">
-<a-box class="collider npc-collider" width="0.78" depth="0.78" height="1.85" position="0 0.92 0" material="opacity: 0; transparent: true"></a-box>
+<a-box class="collider npc-collider" width="0.78" depth="0.78" height="1.85" position="0 0.92 0" material="opacity: 0; transparent: true; depthWrite: false; depthTest: false"></a-box>
 <a-entity animation-mixer="clip: *; loop: repeat" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/suzie_idle.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0"></a-entity><a-entity animation-mixer="clip: *; loop: repeat" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/suzie_walk.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0" visible="false"></a-entity></a-entity>
 </a-entity>
 <!-- ===== END CHARACTERS ===== -->
