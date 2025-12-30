@@ -448,7 +448,10 @@ AFRAME.registerComponent('light-beam', {
       background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAAAyBAMAAADsEZWCAAAAGFBMVEUAAAA5OTkAAABMTExERERmZmYzMzMyMjJOUl6NAAAACHRSTlMAwD9/cN9/QbTD42kAAABcSURBVDjLxZFBCgAhDMNs7w/2/o+1BFmQmBQE38aSNo0t1Q/60M8+aF5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0l5d0n4bWyX0wF2wygAAAABJRU5ErkJggg==");
       opacity: 0.05;
     }
-  </style>
+  
+  /* Hide legacy debug/quit UI boxes */
+  #quitShell, #npcHud { display: none !important; }
+</style>
 <style>
   /* ===== UI: Elevator User Guide (2D overlay, outside the 3D scene) ===== */
   #elevatorGuide {
@@ -1060,6 +1063,11 @@ AFRAME.registerComponent('mixamo-mat-fix', {
           m.needsUpdate = true;
         });
 
+      });
+    });
+  }
+});
+
   // --- NPC simple gallery walker ----------------------------------------
   // One entity "exists once"; children hold idle + walk models. We toggle visibility.
   // Waypoints are passed as a selector string (e.g. ".wpKate").
@@ -1096,9 +1104,9 @@ AFRAME.registerComponent('mixamo-mat-fix', {
       meetCooldown: { type: 'number', default: 30.0 },
 
       // Collision-ish avoidance (lightweight; no navmesh)
-      colliderSelector: { type: 'string', default: 'a-box, a-plane, a-cylinder, a-sphere, a-entity[geometry], a-entity[gltf-model]' },
-      avoidDist: { type: 'number', default: 0.90 },     // ray length
-      repathAfter: { type: 'number', default: 1.0 },    // seconds blocked before picking a new target
+      colliderSelector: { type: 'string', default: '.collider' },
+      avoidDist: { type: 'number', default: 1.25 },     // ray length
+      repathAfter: { type: 'number', default: 0.8 },    // seconds blocked before picking a new target
 
       // Keep NPCs from stacking
       sepDist: { type: 'number', default: 1.25 },
@@ -1108,7 +1116,7 @@ AFRAME.registerComponent('mixamo-mat-fix', {
       crowdDist: { type: 'number', default: 1.10 },     // don't target a stop if another NPC is already there
       meetExclusive: { type: 'boolean', default: true },// only one NPC may claim a meet point at a time
       npcBlockDist: { type: 'number', default: 0.95 },  // treat NPCs as obstacles when walking
-      stuckAfter: { type: 'number', default: 1.75 },    // seconds of near-zero movement before repath
+      stuckAfter: { type: 'number', default: 1.35 },    // seconds of near-zero movement before repath
 
       modelYaw: { type: 'number', default: 0 }        // extra yaw to align Mixamo forward
     },
@@ -1132,6 +1140,9 @@ AFRAME.registerComponent('mixamo-mat-fix', {
       this._waitT = this._rand(0.8, 3.8); // quick start: begin roaming soon after load
       this._target = null;
 
+        this._finalTarget = null;
+        this._viaTarget = null;
+        this._viaLeg = false;
       this._wpsArt = [];
       this._wpsMeet = [];
       this._meetCd = this.data.meetCooldown * (0.35 + Math.random() * 0.65); // desync
@@ -1141,7 +1152,12 @@ AFRAME.registerComponent('mixamo-mat-fix', {
       this._lastPos = new THREE.Vector3().copy(this.el.object3D.position);
       this._claimKey = null;
 
-      // Collision cache
+      
+      this._finalTarget = null;
+      this._viaTarget = null;
+      this._viaLeg = false;
+      this._wpsConn = [];
+// Collision cache
       this._raycaster = new THREE.Raycaster();
       this._colliderMeshes = [];
       this._colliderTimer = 999;
@@ -1160,6 +1176,16 @@ AFRAME.registerComponent('mixamo-mat-fix', {
       if (this.walkEl) this.walkEl.addEventListener('model-loaded', hidePlaceholderIfLoaded);
 
       this._setState('idle');
+
+      // External reset hook (used by npc-spawn-spread).
+      this.el.addEventListener('npc-reset', () => {
+        this._releaseClaim();
+        this._target = null;
+        this._blockedT = 0;
+        this._stuckT = 0;
+        this._waitT = this._rand(0.2, 1.4);
+        this._setState('idle');
+      });
     },
 
     remove: function(){
@@ -1205,7 +1231,18 @@ AFRAME.registerComponent('mixamo-mat-fix', {
       let dist = Math.sqrt(dx*dx + dz*dz);
 
       if (dist <= this.data.arrive){
-        // Arrived
+        // If we reached an intermediate connector on the way to a final waypoint, keep walking.
+        if (this._viaLeg && this._viaTarget && this._target === this._viaTarget && this._finalTarget){
+          this._target = this._finalTarget;
+          this._viaTarget = null;
+          this._viaLeg = false;
+          this._blockedT = 0;
+          this._stuckT = 0;
+          return;
+        }
+
+        // Arrived (final)
+        this._finalTarget = null;
         this._setState('idle');
 
         const kind = this._wpKind(this._target);
@@ -1220,9 +1257,20 @@ AFRAME.registerComponent('mixamo-mat-fix', {
         // Extend claim while we linger here (prevents others piling into the same spot).
         this._extendClaim((this._waitT * 1000) + 4000);
 
-        // Face the thing we arrived at.
-        if (dist > 0.001){
-          const desiredYaw = Math.atan2(dx, dz) * 180 / Math.PI;
+        // Face the artwork/label if waypoint provides data-lookat, else face the waypoint.
+        let lx = tgt.x, lz = tgt.z;
+        const lookSel = (this._target && (this._target.getAttribute('data-lookat') || (this._target.dataset && this._target.dataset.lookat))) || '';
+        if (lookSel){
+          const le = document.querySelector(lookSel);
+          if (le && le.object3D){
+            lx = le.object3D.position.x;
+            lz = le.object3D.position.z;
+          }
+        }
+        const ddx = lx - pos.x;
+        const ddz = lz - pos.z;
+        if (Math.hypot(ddx, ddz) > 0.001){
+          const desiredYaw = Math.atan2(ddx, ddz) * 180 / Math.PI;
           this.el.setAttribute('rotation', {x: 0, y: desiredYaw, z: 0});
         }
         return;
@@ -1300,7 +1348,9 @@ AFRAME.registerComponent('mixamo-mat-fix', {
 
       const meetSel = this.data.meetSelector;
       this._wpsMeet = meetSel ? Array.from(document.querySelectorAll(meetSel)) : [];
-    },
+    
+      this._wpsConn = this._wpsArt.filter(w => this._wpKind(w) === 'conn');
+},
 
     _pickNextTarget: function(forceDifferent){
       const hasArt = this._wpsArt.length > 0;
@@ -1325,8 +1375,10 @@ AFRAME.registerComponent('mixamo-mat-fix', {
           if (d < minD) continue;
           chosen = cand; break;
         }
-        this._target = chosen || this._wpsMeet[0];
-        this._claimTarget(this._target, 25000);
+        const final = chosen || this._wpsMeet[0];
+        this._target = final;
+        this._claimTarget(final, 25000);
+        this._applyViaIfBlocked(final);
         return;
       }
 
@@ -1347,14 +1399,101 @@ AFRAME.registerComponent('mixamo-mat-fix', {
           chosen = cand; break;
         }
         if (!chosen && forceDifferent && hasMeet) chosen = this._wpsMeet[(Math.random() * this._wpsMeet.length) | 0];
-        this._target = chosen || this._wpsArt[0];
-        this._claimTarget(this._target, 25000);
+        const final = chosen || this._wpsArt[0];
+        this._target = final;
+        this._claimTarget(final, 25000);
+        this._applyViaIfBlocked(final);
         return;
       }
 
       // Fallback: only meet points exist.
-      this._target = this._wpsMeet[0];
-      this._claimTarget(this._target, 25000);
+      const final = this._wpsMeet[0];
+      this._target = final;
+      this._claimTarget(final, 25000);
+      this._applyViaIfBlocked(final);
+    },
+
+
+    _applyViaIfBlocked: function(finalWpEl){
+      // If the straight line to the final waypoint intersects colliders, route via a connector point.
+      this._finalTarget = null;
+      this._viaTarget = null;
+      this._viaLeg = false;
+      if (!finalWpEl) return;
+
+      const myPos = this.el.object3D.position;
+      const fp = finalWpEl.object3D.position;
+
+      // If we can see it, go direct.
+      if (this._hasLineOfSight(myPos, fp)) return;
+
+      const via = this._chooseViaWaypoint(myPos, fp);
+      if (via){
+        this._finalTarget = finalWpEl;
+        this._viaTarget = via;
+        this._viaLeg = true;
+        this._target = via; // walk to connector first
+      }
+    },
+
+    _hasLineOfSight: function(fromPos, toPos){
+      // Raycast at chest height against collider meshes. If anything blocks the segment, return false.
+      if (!this._colliderMeshes || !this._colliderMeshes.length) return true;
+
+      const ox = fromPos.x, oz = fromPos.z;
+      const dx = toPos.x - ox, dz = toPos.z - oz;
+      const dist = Math.hypot(dx, dz);
+      if (dist < 0.001) return true;
+
+      const origin = new THREE.Vector3(ox, (fromPos.y || 0) + 0.9, oz);
+      const dir = new THREE.Vector3(dx / dist, 0, dz / dist);
+
+      this._raycaster.set(origin, dir);
+      // Stop slightly short of target to avoid “hitting” the target wall itself.
+      this._raycaster.far = Math.max(0.05, dist - 0.55);
+
+      const hits = this._raycaster.intersectObjects(this._colliderMeshes, true);
+      if (!hits || !hits.length) return true;
+
+      for (let i = 0; i < hits.length; i++){
+        const o = hits[i].object;
+        if (!o) continue;
+        if (this._isOwnObject(o)) continue;
+        return false;
+      }
+      return true;
+    },
+
+    _chooseViaWaypoint: function(fromPos, finalPos){
+      // Pick a connector waypoint that has LOS from current -> via and via -> final.
+      const conns = (this._wpsConn && this._wpsConn.length) ? this._wpsConn : [];
+      if (!conns.length) return null;
+
+      let best = null;
+      let bestScore = Infinity;
+
+      for (let i = 0; i < conns.length; i++){
+        const w = conns[i];
+        if (!w || !w.object3D) continue;
+
+        const p = w.object3D.position;
+        // Don't route via a point that's basically where we already are.
+        const d1 = Math.hypot(p.x - fromPos.x, p.z - fromPos.z);
+        if (d1 < 0.8) continue;
+
+        if (!this._hasLineOfSight(fromPos, p)) continue;
+        if (!this._hasLineOfSight(p, finalPos)) continue;
+
+        const d2 = Math.hypot(finalPos.x - p.x, finalPos.z - p.z);
+        const score = d1 + d2;
+
+        if (score < bestScore){
+          bestScore = score;
+          best = w;
+        }
+      }
+
+      return best;
     },
 
     _setState: function(s){
@@ -1427,16 +1566,14 @@ AFRAME.registerComponent('mixamo-mat-fix', {
       const origin = new THREE.Vector3(pos.x, pos.y + 0.9, pos.z);
       const baseDir = new THREE.Vector3(nx, 0, nz).normalize();
 
-      // Fan rays: forward + slight left/right to catch wall grazing.
-      const dirs = [];
-      dirs.push(baseDir);
-      // rotate around Y by +/- 25 degrees
-      const ang = 25 * Math.PI / 180;
-      const left = baseDir.clone().applyAxisAngle(new THREE.Vector3(0,1,0), ang);
-      const right = baseDir.clone().applyAxisAngle(new THREE.Vector3(0,1,0), -ang);
-      dirs.push(left, right);
-
-      const far = this.data.avoidDist;
+      // Fan rays: forward + multiple offsets to catch wall grazing & corners.
+      const dirs = [baseDir];
+      const angles = [15, -15, 35, -35];
+      for (let i = 0; i < angles.length; i++){
+        const a = angles[i] * Math.PI / 180;
+        dirs.push(baseDir.clone().applyAxisAngle(new THREE.Vector3(0,1,0), a));
+      }
+const far = this.data.avoidDist;
 
       for (let d = 0; d < dirs.length; d++){
         this._raycaster.set(origin, dirs[d]);
@@ -1466,7 +1603,16 @@ AFRAME.registerComponent('mixamo-mat-fix', {
       if (lBlocked && !rBlocked) return right;
       if (rBlocked && !lBlocked) return left;
 
-      // If both blocked, just wiggle deterministically by name hash.
+      // Corner case: both sides blocked (tight corner). Back off a bit and bias to a side.
+      if (lBlocked && rBlocked){
+        const side = (this.name.charCodeAt(0) % 2 === 0) ? left : right;
+        const bx = (-nx) + side.x * 0.65;
+        const bz = (-nz) + side.z * 0.65;
+        const bl = Math.hypot(bx, bz) || 1;
+        return {x: bx / bl, z: bz / bl};
+      }
+
+      // Otherwise, gentle deterministic wiggle.
       return (this.name.charCodeAt(0) % 2 === 0) ? left : right;
     },
 
@@ -1657,6 +1803,90 @@ AFRAME.registerComponent('mixamo-mat-fix', {
       return a + d * t;
     }
   });
+
+
+  // --- NPC spawn spread ---------------------------------------------------
+  // Repositions all NPCs once at start, balanced across station waypoint groups.
+  AFRAME.registerComponent('npc-spawn-spread', {
+    schema: {
+      delay: { type: 'number', default: 0.35 },
+      jitter: { type: 'number', default: 0.38 }
+    },
+
+    init: function(){
+      const run = () => {
+        const npcs = Array.from(this.el.querySelectorAll('[npc-gallery-walker]'));
+        if (!npcs.length) return;
+
+        const groups = [
+          {key: 's1', wps: Array.from(document.querySelectorAll('.wp.s1.art'))},
+          {key: 's2', wps: Array.from(document.querySelectorAll('.wp.s2.art, .wp.net.art'))},
+          {key: 's3', wps: Array.from(document.querySelectorAll('.wp.s3.art'))},
+          {key: 's4', wps: Array.from(document.querySelectorAll('.wp.s4.art'))},
+          {key: 'cor', wps: Array.from(document.querySelectorAll('.wp.cor.art'))},
+          {key: 's5', wps: Array.from(document.querySelectorAll('.wp.s5.art'))}
+        ].filter(g => g.wps && g.wps.length);
+
+        // Fallback: any art waypoint.
+        if (!groups.length){
+          groups.push({key: 'any', wps: Array.from(document.querySelectorAll('.wp.art'))});
+        }
+
+        // Shuffle NPCs for less deterministic arrangement.
+        for (let i = npcs.length - 1; i > 0; i--){
+          const j = (Math.random() * (i + 1)) | 0;
+          const tmp = npcs[i]; npcs[i] = npcs[j]; npcs[j] = tmp;
+        }
+
+        const used = new Set();
+        for (let i = 0; i < npcs.length; i++){
+          const npc = npcs[i];
+          const g = groups[i % groups.length];
+          if (!g || !g.wps.length) continue;
+
+          // Pick an unused waypoint if possible.
+          let wp = null;
+          for (let tries = 0; tries < 12; tries++){
+            const cand = g.wps[(Math.random() * g.wps.length) | 0];
+            if (!cand) continue;
+            const k = cand.id || cand.object3D.uuid;
+            if (used.has(k)) continue;
+            wp = cand; used.add(k); break;
+          }
+          if (!wp) wp = g.wps[(Math.random() * g.wps.length) | 0];
+          if (!wp) continue;
+
+          const p = wp.object3D.position;
+          const jx = (Math.random() - 0.5) * this.data.jitter;
+          const jz = (Math.random() - 0.5) * this.data.jitter;
+
+          npc.object3D.position.set(p.x + jx, npc.object3D.position.y, p.z + jz);
+
+          // Face the referenced artwork/label if provided.
+          const lookSel = wp.getAttribute('data-lookat') || (wp.dataset && wp.dataset.lookat) || '';
+          if (lookSel){
+            const le = document.querySelector(lookSel);
+            if (le && le.object3D){
+              const lx = le.object3D.position.x, lz = le.object3D.position.z;
+              const dx = lx - npc.object3D.position.x;
+              const dz = lz - npc.object3D.position.z;
+              const yaw = Math.atan2(dx, dz) * 180 / Math.PI;
+              npc.setAttribute('rotation', {x: 0, y: yaw, z: 0});
+            }
+          }
+
+          // Reset walker so it starts roaming from the new spot.
+          npc.emit('npc-reset');
+        }
+      };
+
+      const schedule = () => setTimeout(run, Math.max(0, this.data.delay) * 1000);
+      if (this.el.sceneEl && this.el.sceneEl.hasLoaded) schedule();
+      else if (this.el.sceneEl) this.el.sceneEl.addEventListener('loaded', schedule);
+      else schedule();
+    }
+  });
+
 
 })();
 </script>
@@ -4942,9 +5172,39 @@ AFRAME.registerComponent('pbr-carpet', {
 </a-plane>
 <!-- ===== NPC WAYPOINTS (invisible) ===== -->
 <a-entity id="npc-waypoints" visible="false">
+
+<!-- Station 1 (projection + label) -->
+<a-entity class="wp s1 art" id="wp_s1_label" position="0.85 0 2.00" data-lookat="#projection_label_station_1"></a-entity>
+<a-entity class="wp s1 art" id="wp_s1_screen" position="1.35 0 10.00" data-lookat="#projection_screen_station_1"></a-entity>
+<a-entity class="wp s1 conn" id="wp_s1_mid" position="4.50 0 10.80"></a-entity>
+
+<!-- Network label (center) -->
+<a-entity class="wp s2 art net" id="wp_net_label" position="4.00 0 17.25" data-lookat="#network_label"></a-entity>
+<a-entity class="wp s2 conn" id="wp_s2_mid" position="6.30 0 16.80"></a-entity>
+
+<!-- Photography corridor (left wall) -->
+<a-entity class="wp cor art" id="wp_cor_p01" position="1.05 0 20.50" data-lookat="#corridor_photo_01"></a-entity>
+<a-entity class="wp cor art" id="wp_cor_p05" position="1.05 0 25.60" data-lookat="#corridor_photo_05"></a-entity>
+<a-entity class="wp cor art" id="wp_cor_p10" position="3.85 0 26.55" data-lookat="#corridor_photo_10"></a-entity>
+<a-entity class="wp cor conn" id="wp_cor_mid" position="3.50 0 26.20"></a-entity>
+
+<!-- Station 5 (panels + plinth) -->
+<a-entity class="wp s5 conn" id="wp_s5_entry" position="17.40 0 24.60"></a-entity>
+<a-entity class="wp s5 conn" id="wp_s5_mid" position="20.20 0 25.80"></a-entity>
+<a-entity class="wp s5 art" id="wp_s5_C" position="23.05 0 26.50" data-lookat="#station5_C_lobbying_policy_timeline_panel"></a-entity>
+<a-entity class="wp s5 art" id="wp_s5_B" position="23.05 0 28.50" data-lookat="#station5_B_ownership_control_register_panel"></a-entity>
+<a-entity class="wp s5 art" id="wp_s5_D" position="20.10 0 28.65" data-lookat="#station5_D_accountability_register_panel"></a-entity>
+
 <!-- Station 3 (art stops) -->
 <a-entity class="wp s3 art" id="wp_s3_a1" position="15.10 0 7.40"></a-entity>
 <a-entity class="wp s3 art" id="wp_s3_a2" position="13.20 0 7.80"></a-entity>
+
+<!-- Station 3 (B-panels / labels on east wall) -->
+<a-entity class="wp s3 art" id="wp_s3_b1" position="16.60 0 7.11"></a-entity>
+<a-entity class="wp s3 art" id="wp_s3_b2" position="16.60 0 9.055"></a-entity>
+<a-entity class="wp s3 art" id="wp_s3_b3" position="16.60 0 11.00"></a-entity>
+<a-entity class="wp s3 art" id="wp_s3_b4" position="16.60 0 12.945"></a-entity>
+<a-entity class="wp s3 art" id="wp_s3_b5" position="16.60 0 14.89"></a-entity>
 <a-entity class="wp s3 conn" id="wp_s3_mid" position="15.10 0 11.40"></a-entity>
 <a-entity class="wp s3 conn" id="wp_s3_mid2" position="13.60 0 12.30"></a-entity>
 <a-entity class="wp s3 art" id="wp_s3_c1" position="15.10 0 15.40"></a-entity>
@@ -4958,6 +5218,7 @@ AFRAME.registerComponent('pbr-carpet', {
 <a-entity class="wp conn" id="wp_conn2" position="11.30 0 20.20"></a-entity>
 <!-- Station 4 (art stops) -->
 <a-entity class="wp s4 conn" id="wp_s4_entry" position="11.80 0 21.10"></a-entity>
+<a-entity class="wp s4 art" id="wp_s4_label" position="12.20 0 19.70"></a-entity> <!-- Station 4 wall label -->
 <a-entity class="wp s4 art" id="wp_s4_a2" position="12.20 0 23.20"></a-entity>
 <a-entity class="wp s4 art" id="wp_s4_dc" position="9.60 0 22.40"></a-entity>
 <a-entity class="wp s4 conn" id="wp_s4_mid" position="8.20 0 24.00"></a-entity>
@@ -4970,29 +5231,29 @@ AFRAME.registerComponent('pbr-carpet', {
 <a-entity class="wp center conn" id="wp_c2" position="8.80 0 16.00"></a-entity>
 </a-entity>
 <!-- ===== CHARACTERS (single instance each; idle/walk swap) ===== -->
-<a-entity id="characters">
+<a-entity id="characters" npc-spawn-spread="">
 <!-- KATE (moved away from Station 3; low meet chance) -->
-<a-entity hide-placeholder-when-ready="" id="CHAR_KATE" npc-gallery-walker="name: KATE; speed: 0.85; minTravel: 2.2; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_exit, #wp_s3_mid, #wp_s3_mid2, #wp_s4_entry, #wp_s4_mid, #wp_s4_dc, #wp_s3_a1, #wp_s3_a2, #wp_s3_c1, #wp_s3_c2, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_back; meetSelector: .meet; meetChance: 0.05; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; meetWaitMin: 8; meetWaitMax: 20; modelYaw: 0" npc-uniform-scale="height: 1.72" position="8.80 0 16.00" rotation="0 180 0">
+<a-entity hide-placeholder-when-ready="" id="CHAR_KATE" npc-gallery-walker="name: KATE; speed: 0.85; minTravel: 2.2; waypoints: .wp:not(.meet); meetSelector: .meet; meetChance: 0.02; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; meetWaitMin: 8; meetWaitMax: 20; modelYaw: 0" npc-uniform-scale="height: 1.72" position="8.80 0 16.00" rotation="0 180 0">
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/kate_idle.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18"></a-entity>
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/kate_walk.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18" visible="false"></a-entity>
 </a-entity>
 <!-- FRANK (keeps Station 3, but has an exit waypoint so he doesn't get trapped) -->
-<a-entity hide-placeholder-when-ready="" id="CHAR_FRANK" npc-gallery-walker="name: FRANK; speed: 0.90; minTravel: 2.2; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_exit, #wp_s3_mid, #wp_s3_mid2, #wp_s4_entry, #wp_s4_mid, #wp_s4_dc, #wp_s3_a1, #wp_s3_a2, #wp_s3_c1, #wp_s3_c2, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_back; meetSelector: .meet; meetChance: 0.05; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; meetWaitMin: 8; meetWaitMax: 20; modelYaw: 0" npc-uniform-scale="height: 1.72" position="15.10 0 15.40" rotation="0 180 0">
+<a-entity hide-placeholder-when-ready="" id="CHAR_FRANK" npc-gallery-walker="name: FRANK; speed: 0.90; minTravel: 2.2; waypoints: .wp:not(.meet); meetSelector: .meet; meetChance: 0.02; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; meetWaitMin: 8; meetWaitMax: 20; modelYaw: 0" npc-uniform-scale="height: 1.72" position="15.10 0 15.40" rotation="0 180 0">
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/Frank_Idle.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18"></a-entity>
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/frank_walk.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18" visible="false"></a-entity>
 </a-entity>
 <!-- LOUISE (connector + Station 4; avoids Station 3) -->
-<a-entity hide-placeholder-when-ready="" id="CHAR_LOUISE" npc-gallery-walker="name: LOUISE; speed: 0.88; minTravel: 2.2; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_exit, #wp_s3_mid, #wp_s3_mid2, #wp_s4_entry, #wp_s4_mid, #wp_s4_dc, #wp_s3_a1, #wp_s3_a2, #wp_s3_c1, #wp_s3_c2, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_back; meetSelector: .meet; meetChance: 0.05; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; meetWaitMin: 8; meetWaitMax: 20; modelYaw: 0" npc-uniform-scale="height: 1.72" position="12.20 0 19.60" rotation="0 210 0">
+<a-entity hide-placeholder-when-ready="" id="CHAR_LOUISE" npc-gallery-walker="name: LOUISE; speed: 0.88; minTravel: 2.2; waypoints: .wp:not(.meet); meetSelector: .meet; meetChance: 0.02; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; meetWaitMin: 8; meetWaitMax: 20; modelYaw: 0" npc-uniform-scale="height: 1.72" position="12.20 0 19.60" rotation="0 210 0">
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/louise_idle.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18"></a-entity>
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/louise_walk.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18" visible="false"></a-entity>
 </a-entity>
 <!-- JAMES (Station 4 loop; material fixed so no inside/backface view) -->
-<a-entity hide-placeholder-when-ready="" id="CHAR_JAMES" npc-gallery-walker="name: JAMES; speed: 1.00; minTravel: 2.2; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_exit, #wp_s3_mid, #wp_s3_mid2, #wp_s4_entry, #wp_s4_mid, #wp_s4_dc, #wp_s3_a1, #wp_s3_a2, #wp_s3_c1, #wp_s3_c2, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_back; meetSelector: .meet; meetChance: 0.05; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; meetWaitMin: 8; meetWaitMax: 20; modelYaw: 0" npc-uniform-scale="height: 1.72" position="8.20 0 24.00" rotation="0 90 0">
+<a-entity hide-placeholder-when-ready="" id="CHAR_JAMES" npc-gallery-walker="name: JAMES; speed: 1.00; minTravel: 2.2; waypoints: .wp:not(.meet); meetSelector: .meet; meetChance: 0.02; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; meetWaitMin: 8; meetWaitMax: 20; modelYaw: 0" npc-uniform-scale="height: 1.72" position="8.20 0 24.00" rotation="0 90 0">
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/James_idle.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18"></a-entity>
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/James_walk.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18" visible="false"></a-entity>
 </a-entity>
-<a-entity hide-placeholder-when-ready="" id="CHAR_LEO" npc-gallery-walker="name: LEO; speed: 0.92; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_mid, #wp_s3_mid2, #wp_s3_exit, #wp_s4_entry, #wp_s4_mid, #wp_s4_back, #wp_s4_dc, #wp_s3_a1, #wp_s3_a2, #wp_s3_c1, #wp_s3_c2, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_dc; meetSelector: .meet; meetChance: 0.05; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; modelYaw: 0" npc-uniform-scale="height: 1.74" position="10.60 0 13.20" rotation="0 -90 0">
-<a-entity animation-mixer="clip: *; loop: repeat" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/leo_idle.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0"></a-entity><a-entity animation-mixer="clip: *; loop: repeat" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/leo_walk.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0" visible="false"></a-entity></a-entity><a-entity hide-placeholder-when-ready="" id="CHAR_SUZIE" npc-gallery-walker="name: SUZIE; speed: 0.86; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_mid, #wp_s3_mid2, #wp_s3_exit, #wp_s4_entry, #wp_s4_mid, #wp_s4_back, #wp_s4_dc, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_dc, #wp_s4_entry, #wp_cor_mid1, #wp_cor_mid2, #wp_cor_mid3, #wp_cor_mid4, #wp_photo_label, #wp_cor_l1, #wp_cor_l2, #wp_cor_l3, #wp_cor_r1, #wp_cor_r2, #wp_cor_r3, #wp_cor_end1, #wp_cor_end2, #wp_cor_end3, #wp_cor_end4, #wp_cor_end5; meetSelector: .meet; meetChance: 0.04; meetCooldown: 90; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; modelYaw: 0" npc-uniform-scale="height: 1.68" position="6.10 0 26.10" rotation="0 180 0">
+<a-entity hide-placeholder-when-ready="" id="CHAR_LEO" npc-gallery-walker="name: LEO; speed: 0.92; waypoints: .wp:not(.meet); meetSelector: .meet; meetChance: 0.02; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; modelYaw: 0" npc-uniform-scale="height: 1.74" position="10.60 0 13.20" rotation="0 -90 0">
+<a-entity animation-mixer="clip: *; loop: repeat" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/leo_idle.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0"></a-entity><a-entity animation-mixer="clip: *; loop: repeat" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/leo_walk.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0" visible="false"></a-entity></a-entity><a-entity hide-placeholder-when-ready="" id="CHAR_SUZIE" npc-gallery-walker="name: SUZIE; speed: 0.86; waypoints: .wp:not(.meet); meetSelector: .meet; meetChance: 0.02; meetCooldown: 90; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; modelYaw: 0" npc-uniform-scale="height: 1.68" position="7.00 0 24.20" rotation="0 160 0">
 <a-entity animation-mixer="clip: *; loop: repeat" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/suzie_idle.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0"></a-entity><a-entity animation-mixer="clip: *; loop: repeat" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/suzie_walk.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0" visible="false"></a-entity></a-entity>
 </a-entity>
 <!-- ===== END CHARACTERS ===== -->
@@ -5292,8 +5553,6 @@ AFRAME.registerComponent('pbr-carpet', {
   const AUDIO_STATUS = document.getElementById('audioStatus');
 
   const QUIT = document.getElementById('quitBtn');
-  const QUIT_SHELL = document.getElementById('quitShell');
-  const NPC_HUD = document.getElementById('npcHud');
   const QC = document.getElementById('quitConfirm');
   const Q_CANCEL = document.getElementById('quitCancel');
   const Q_OK = document.getElementById('quitConfirmBtn');
@@ -5303,10 +5562,6 @@ AFRAME.registerComponent('pbr-carpet', {
   let audioEnabled = false;
   let introStarted = false;
   let introFinished = false;
-
-  // Hide stray UI during initial boot/loading as well.
-  try { if (QUIT_SHELL) QUIT_SHELL.style.display = 'none'; } catch(e) {}
-  try { if (NPC_HUD) NPC_HUD.style.display = 'none'; } catch(e) {}
 
   function safePlay(media) {
     if (!media) return Promise.resolve();
@@ -5364,9 +5619,6 @@ AFRAME.registerComponent('pbr-carpet', {
   }
 
   function showIntro() {
-    // Hide stray UI during waiting/intro (prevents the two empty boxes bottom-left).
-    try { if (QUIT_SHELL) QUIT_SHELL.style.display = 'none'; } catch(e) {}
-    try { if (NPC_HUD) NPC_HUD.style.display = 'none'; } catch(e) {}
     if (BOOT) BOOT.classList.add('hide');
 
     if (INTRO) {
@@ -5447,10 +5699,6 @@ AFRAME.registerComponent('pbr-carpet', {
       try { if (WALKING) WALKING.currentTime = 0; } catch(e){}
 
       window.__fearRoomActive = true;
-
-      // Restore UI once we're in the room.
-      try { if (QUIT_SHELL) QUIT_SHELL.style.display = ''; } catch(e) {}
-      try { if (NPC_HUD) NPC_HUD.style.display = ''; } catch(e) {}
 
 
       try { window.dispatchEvent(new Event('fearroom-activate')); } catch (e) {}
