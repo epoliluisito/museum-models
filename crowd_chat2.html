@@ -430,17 +430,6 @@ AFRAME.registerComponent('light-beam', {
     display: none !important;
   }
   video{ outline: none !important; }
-
-  /* Hide A-Frame default UI buttons (can appear as empty squares on intro/wait overlays) */
-  .a-enter-vr, .a-enter-ar, .a-fullscreen,
-  #a-enter-vr, #a-enter-ar, #a-fullscreen,
-  .a-enter-vr-button, .a-enter-ar-button, .a-fullscreen-button {
-    display: none !important;
-  }
-
-  /* Remove leftover bottom-left empty boxes on waiting/intro */
-  #npcHud, #quitShell { display: none !important; }
-
 /* UI Hint */
     #hint {
       position: fixed; left: 12px; bottom: 12px; z-index: 20;
@@ -1170,21 +1159,7 @@ AFRAME.registerComponent('mixamo-mat-fix', {
       if (this.idleEl) this.idleEl.addEventListener('model-loaded', hidePlaceholderIfLoaded);
       if (this.walkEl) this.walkEl.addEventListener('model-loaded', hidePlaceholderIfLoaded);
 
-      
-      // Allow external scripts to re-place this NPC (used by npc-spawn-spread).
-      this.el.addEventListener('npc-reset', () => {
-        try{
-          this._releaseClaim && this._releaseClaim();
-          this._target = null;
-          this._blockedT = 0;
-          this._stuckT = 0;
-          // Start moving soon (avoids the "everyone idle forever" feel).
-          this._waitT = this._rand(0.2, 1.4) + (Math.random() * 0.6);
-          this._lastPos.copy(this.el.object3D.position);
-          this._setState('idle');
-        } catch(e){}
-      });
-this._setState('idle');
+      this._setState('idle');
     },
 
     remove: function(){
@@ -1245,22 +1220,8 @@ this._setState('idle');
         // Extend claim while we linger here (prevents others piling into the same spot).
         this._extendClaim((this._waitT * 1000) + 4000);
 
-        // Face the artwork/label we came to (if waypoint provides data-lookat),
-        // otherwise face the waypoint itself.
-        const lookSel = this._target && this._target.getAttribute && this._target.getAttribute('data-lookat');
-        if (lookSel){
-          const lookEl = document.querySelector(lookSel);
-          if (lookEl && lookEl.object3D){
-            const tp = lookEl.object3D.getWorldPosition(new THREE.Vector3());
-            const mp = this.el.object3D.getWorldPosition(new THREE.Vector3());
-            const dx2 = tp.x - mp.x;
-            const dz2 = tp.z - mp.z;
-            if (Math.hypot(dx2, dz2) > 0.001){
-              const desiredYaw = Math.atan2(dx2, dz2) * 180 / Math.PI;
-              this.el.setAttribute('rotation', {x: 0, y: desiredYaw, z: 0});
-            }
-          }
-        } else if (dist > 0.001){
+        // Face the thing we arrived at.
+        if (dist > 0.001){
           const desiredYaw = Math.atan2(dx, dz) * 180 / Math.PI;
           this.el.setAttribute('rotation', {x: 0, y: desiredYaw, z: 0});
         }
@@ -1697,75 +1658,6 @@ this._setState('idle');
     }
   });
 
-
-  // --- NPC spawn spread ---------------------------------------------------
-  // Places all characters at distinct "visitor-like" starting points so the room feels populated immediately.
-  AFRAME.registerComponent('npc-spawn-spread', {
-    schema: {
-      pool: { type: 'string', default: '#npc-waypoints .wp' },
-      minDist: { type: 'number', default: 1.70 },
-      jitter: { type: 'number', default: 0.22 },
-      startDelayMax: { type: 'number', default: 2.8 }
-    },
-
-    init: function(){
-      const scene = this.el.sceneEl;
-      const run = () => {
-        const npcs = Array.from(this.el.querySelectorAll('[npc-gallery-walker]'));
-        if (!npcs.length) return;
-
-        const wpsAll = Array.from(document.querySelectorAll(this.data.pool))
-          .filter(w => w && w.object3D && w.object3D.position);
-
-        if (!wpsAll.length) return;
-
-        const art = wpsAll.filter(w => w.classList && w.classList.contains('art'));
-        const conn = wpsAll.filter(w => w.classList && w.classList.contains('conn') && !w.classList.contains('meet'));
-        const meet = wpsAll.filter(w => w.classList && w.classList.contains('meet'));
-        const pool = (art.length ? art : wpsAll).concat(conn).concat(meet);
-
-        // Shuffle
-        for (let i = pool.length - 1; i > 0; i--){
-          const j = (Math.random() * (i + 1)) | 0;
-          const tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp;
-        }
-
-        const chosen = [];
-        const minD = this.data.minDist;
-        const ok = (x,z) => chosen.every(c => Math.hypot(c.x-x, c.z-z) >= minD);
-
-        for (let n = 0; n < npcs.length; n++){
-          const npc = npcs[n];
-          let wp = null;
-
-          for (let tries = 0; tries < 120; tries++){
-            const cand = pool[(Math.random() * pool.length) | 0];
-            const p = cand.object3D.position;
-            if (ok(p.x, p.z)){ wp = cand; break; }
-          }
-          if (!wp) wp = pool[(Math.random() * pool.length) | 0];
-
-          const p = wp.object3D.position;
-          const j = this.data.jitter;
-          const x = p.x + (Math.random() * 2 - 1) * j;
-          const z = p.z + (Math.random() * 2 - 1) * j;
-
-          npc.object3D.position.set(x, npc.object3D.position.y, z);
-          chosen.push({x, z});
-
-          // Trigger the walker to pick a new target soon (desynced).
-          const delay = Math.random() * this.data.startDelayMax;
-          setTimeout(() => npc.emit('npc-reset'), delay * 1000);
-        }
-      };
-
-      if (scene && scene.hasLoaded) setTimeout(run, 250);
-      else if (scene) scene.addEventListener('loaded', () => setTimeout(run, 250), { once: true });
-      else setTimeout(run, 600);
-    }
-  });
-
-
 })();
 </script>
 <!-- ===== END NPC SYSTEM ===== -->
@@ -1832,6 +1724,9 @@ this._setState('idle');
 </div>
 </div>
 </div>
+<div id="quitShell">
+<button id="quitBtn" type="button">QUIT</button>
+</div>
 <div aria-hidden="true" id="quitConfirm">
 <div aria-label="Quit experience" aria-modal="true" id="quitCard" role="dialog">
 <h3>Quit experience</h3>
@@ -1844,6 +1739,7 @@ this._setState('idle');
 </div>
 <!-- ===== END ERA ORA Intro / Loading UI ===== -->
 <div class="overlay grain"></div>
+<div aria-hidden="true" id="npcHud"></div>
 <a-scene background="color: #020202" fog="type: exponential; color: #050505; density: 0.00022" renderer="antialias: true; colorManagement: true; physicallyCorrectLights: true; exposure: 0.92; highRefreshRate: true;" s4-mercury-manager="" shadow="type: pcfsoft; autoUpdate: true;" tabindex="0" vr-mode-ui="enabled: false">
 <a-assets>
 <video crossorigin="anonymous" id="fearVideo" loop="" muted="" playsinline="" preload="auto" webkit-playsinline="" tabindex="-1" disablepictureinpicture disableremoteplayback controlslist="nodownload noplaybackrate noremoteplayback">
@@ -5047,11 +4943,11 @@ AFRAME.registerComponent('pbr-carpet', {
 <!-- ===== NPC WAYPOINTS (invisible) ===== -->
 <a-entity id="npc-waypoints" visible="false">
 <!-- Station 3 (art stops) -->
-<a-entity class="wp s3 art" id="wp_s3_a1" position="15.10 0 7.40" data-lookat="#station3_A1_panel"></a-entity>
+<a-entity class="wp s3 art" id="wp_s3_a1" position="15.10 0 7.40"></a-entity>
 <a-entity class="wp s3 art" id="wp_s3_a2" position="13.20 0 7.80"></a-entity>
 <a-entity class="wp s3 conn" id="wp_s3_mid" position="15.10 0 11.40"></a-entity>
 <a-entity class="wp s3 conn" id="wp_s3_mid2" position="13.60 0 12.30"></a-entity>
-<a-entity class="wp s3 art" id="wp_s3_c1" position="15.10 0 15.40" data-lookat="#station3_C1_panel"></a-entity>
+<a-entity class="wp s3 art" id="wp_s3_c1" position="15.10 0 15.40"></a-entity>
 <a-entity class="wp s3 art" id="wp_s3_c2" position="13.30 0 15.80"></a-entity>
 <!-- Connector / social meet (shared) -->
 <a-entity class="wp meet" id="wp_meet" position="12.00 0 18.00"></a-entity>
@@ -5062,56 +4958,41 @@ AFRAME.registerComponent('pbr-carpet', {
 <a-entity class="wp conn" id="wp_conn2" position="11.30 0 20.20"></a-entity>
 <!-- Station 4 (art stops) -->
 <a-entity class="wp s4 conn" id="wp_s4_entry" position="11.80 0 21.10"></a-entity>
-<a-entity class="wp s4 art" id="wp_s4_a2" position="12.20 0 23.20" data-lookat="#s4_wall_A2_mount"></a-entity>
-<a-entity class="wp s4 art" id="wp_s4_dc" position="9.60 0 22.40" data-lookat="#station4_table_contents"></a-entity>
+<a-entity class="wp s4 art" id="wp_s4_a2" position="12.20 0 23.20"></a-entity>
+<a-entity class="wp s4 art" id="wp_s4_dc" position="9.60 0 22.40"></a-entity>
 <a-entity class="wp s4 conn" id="wp_s4_mid" position="8.20 0 24.00"></a-entity>
-<a-entity class="wp s4 art" id="wp_s4_wall" position="7.80 0 22.60" data-lookat="#s4_wall_A3_mount"></a-entity>
-<a-entity class="wp s4 art" id="wp_s4_a4" position="6.10 0 26.10" data-lookat="#s4_wall_A4_mount"></a-entity>
+<a-entity class="wp s4 art" id="wp_s4_wall" position="7.80 0 22.60"></a-entity>
+<a-entity class="wp s4 art" id="wp_s4_a4" position="6.10 0 26.10"></a-entity>
 <a-entity class="wp s4 conn" id="wp_s4_back" position="6.40 0 24.60"></a-entity>
 <!-- Added central / exit waypoints to prevent Station 3 trapping and spread characters -->
 <a-entity class="wp s3 conn" id="wp_s3_exit" position="12.80 0 16.80"></a-entity>
 <a-entity class="wp center conn" id="wp_c1" position="10.50 0 14.50"></a-entity>
 <a-entity class="wp center conn" id="wp_c2" position="8.80 0 16.00"></a-entity>
-
-  <!-- Station 3: B-wall panel viewing stops -->
-  <a-entity class="wp s3 art" id="wp_s3_b1" position="16.20 0 7.11" data-lookat="#station3_B1_panel"></a-entity>
-  <a-entity class="wp s3 art" id="wp_s3_b2" position="16.20 0 9.06" data-lookat="#station3_B2_panel"></a-entity>
-  <a-entity class="wp s3 art" id="wp_s3_b3" position="16.20 0 11.00" data-lookat="#station3_B3_panel"></a-entity>
-  <a-entity class="wp s3 art" id="wp_s3_b4" position="16.20 0 12.95" data-lookat="#station3_B4_panel"></a-entity>
-  <a-entity class="wp s3 art" id="wp_s3_b5" position="16.20 0 14.89" data-lookat="#station3_B5_panel"></a-entity>
-
-  <!-- Station 4: additional art/label viewing stops -->
-  <a-entity class="wp s4 art" id="wp_s4_a1" position="9.00 0 26.20" data-lookat="#s4_wall_A1_mount"></a-entity>
-  <a-entity class="wp s4 art" id="wp_s4_a5a6" position="7.90 0 22.20" data-lookat="#s4_wall_A5A6_stack"></a-entity>
-
-  <!-- Corridor photo label: "reading" stop -->
-  <a-entity class="wp conn art" id="wp_photo_label" position="4.20 0 19.50" data-lookat="#photo_label"></a-entity>
-
 </a-entity>
 <!-- ===== CHARACTERS (single instance each; idle/walk swap) ===== -->
-<a-entity id="characters" npc-spawn-spread="pool: #npc-waypoints .wp; minDist: 1.70; jitter: 0.22; startDelayMax: 2.8">
+<a-entity id="characters">
 <!-- KATE (moved away from Station 3; low meet chance) -->
-<a-entity hide-placeholder-when-ready="" id="CHAR_KATE" npc-gallery-walker="name: KATE; speed: 0.85; minTravel: 2.2; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_exit, #wp_s3_mid, #wp_s3_mid2, #wp_s4_entry, #wp_s4_mid, #wp_s4_dc, #wp_s3_a1, #wp_s3_a2, #wp_s3_c1, #wp_s3_c2, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_back, #wp_s3_b1, #wp_s3_b2, #wp_s3_b3, #wp_s3_b4, #wp_s3_b5, #wp_s4_a1, #wp_s4_a5a6, #wp_photo_label; meetSelector: .meet; meetChance: 0.03; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; meetWaitMin: 8; meetWaitMax: 20; modelYaw: 0" npc-uniform-scale="height: 1.72" position="8.80 0 16.00" rotation="0 180 0">
+<a-entity hide-placeholder-when-ready="" id="CHAR_KATE" npc-gallery-walker="name: KATE; speed: 0.85; minTravel: 2.2; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_exit, #wp_s3_mid, #wp_s3_mid2, #wp_s4_entry, #wp_s4_mid, #wp_s4_dc, #wp_s3_a1, #wp_s3_a2, #wp_s3_c1, #wp_s3_c2, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_back; meetSelector: .meet; meetChance: 0.05; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; meetWaitMin: 8; meetWaitMax: 20; modelYaw: 0" npc-uniform-scale="height: 1.72" position="8.80 0 16.00" rotation="0 180 0">
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/kate_idle.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18"></a-entity>
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/kate_walk.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18" visible="false"></a-entity>
 </a-entity>
 <!-- FRANK (keeps Station 3, but has an exit waypoint so he doesn't get trapped) -->
-<a-entity hide-placeholder-when-ready="" id="CHAR_FRANK" npc-gallery-walker="name: FRANK; speed: 0.90; minTravel: 2.2; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_exit, #wp_s3_mid, #wp_s3_mid2, #wp_s4_entry, #wp_s4_mid, #wp_s4_dc, #wp_s3_a1, #wp_s3_a2, #wp_s3_c1, #wp_s3_c2, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_back, #wp_s3_b1, #wp_s3_b2, #wp_s3_b3, #wp_s3_b4, #wp_s3_b5, #wp_s4_a1, #wp_s4_a5a6, #wp_photo_label; meetSelector: .meet; meetChance: 0.03; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; meetWaitMin: 8; meetWaitMax: 20; modelYaw: 0" npc-uniform-scale="height: 1.72" position="15.10 0 15.40" rotation="0 180 0">
+<a-entity hide-placeholder-when-ready="" id="CHAR_FRANK" npc-gallery-walker="name: FRANK; speed: 0.90; minTravel: 2.2; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_exit, #wp_s3_mid, #wp_s3_mid2, #wp_s4_entry, #wp_s4_mid, #wp_s4_dc, #wp_s3_a1, #wp_s3_a2, #wp_s3_c1, #wp_s3_c2, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_back; meetSelector: .meet; meetChance: 0.05; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; meetWaitMin: 8; meetWaitMax: 20; modelYaw: 0" npc-uniform-scale="height: 1.72" position="15.10 0 15.40" rotation="0 180 0">
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/Frank_Idle.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18"></a-entity>
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/frank_walk.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18" visible="false"></a-entity>
 </a-entity>
 <!-- LOUISE (connector + Station 4; avoids Station 3) -->
-<a-entity hide-placeholder-when-ready="" id="CHAR_LOUISE" npc-gallery-walker="name: LOUISE; speed: 0.88; minTravel: 2.2; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_exit, #wp_s3_mid, #wp_s3_mid2, #wp_s4_entry, #wp_s4_mid, #wp_s4_dc, #wp_s3_a1, #wp_s3_a2, #wp_s3_c1, #wp_s3_c2, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_back, #wp_s3_b1, #wp_s3_b2, #wp_s3_b3, #wp_s3_b4, #wp_s3_b5, #wp_s4_a1, #wp_s4_a5a6, #wp_photo_label; meetSelector: .meet; meetChance: 0.03; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; meetWaitMin: 8; meetWaitMax: 20; modelYaw: 0" npc-uniform-scale="height: 1.72" position="12.20 0 19.60" rotation="0 210 0">
+<a-entity hide-placeholder-when-ready="" id="CHAR_LOUISE" npc-gallery-walker="name: LOUISE; speed: 0.88; minTravel: 2.2; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_exit, #wp_s3_mid, #wp_s3_mid2, #wp_s4_entry, #wp_s4_mid, #wp_s4_dc, #wp_s3_a1, #wp_s3_a2, #wp_s3_c1, #wp_s3_c2, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_back; meetSelector: .meet; meetChance: 0.05; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; meetWaitMin: 8; meetWaitMax: 20; modelYaw: 0" npc-uniform-scale="height: 1.72" position="12.20 0 19.60" rotation="0 210 0">
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/louise_idle.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18"></a-entity>
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/louise_walk.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18" visible="false"></a-entity>
 </a-entity>
 <!-- JAMES (Station 4 loop; material fixed so no inside/backface view) -->
-<a-entity hide-placeholder-when-ready="" id="CHAR_JAMES" npc-gallery-walker="name: JAMES; speed: 1.00; minTravel: 2.2; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_exit, #wp_s3_mid, #wp_s3_mid2, #wp_s4_entry, #wp_s4_mid, #wp_s4_dc, #wp_s3_a1, #wp_s3_a2, #wp_s3_c1, #wp_s3_c2, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_back, #wp_s3_b1, #wp_s3_b2, #wp_s3_b3, #wp_s3_b4, #wp_s3_b5, #wp_s4_a1, #wp_s4_a5a6, #wp_photo_label; meetSelector: .meet; meetChance: 0.03; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; meetWaitMin: 8; meetWaitMax: 20; modelYaw: 0" npc-uniform-scale="height: 1.72" position="8.20 0 24.00" rotation="0 90 0">
+<a-entity hide-placeholder-when-ready="" id="CHAR_JAMES" npc-gallery-walker="name: JAMES; speed: 1.00; minTravel: 2.2; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_exit, #wp_s3_mid, #wp_s3_mid2, #wp_s4_entry, #wp_s4_mid, #wp_s4_dc, #wp_s3_a1, #wp_s3_a2, #wp_s3_c1, #wp_s3_c2, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_back; meetSelector: .meet; meetChance: 0.05; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; meetWaitMin: 8; meetWaitMax: 20; modelYaw: 0" npc-uniform-scale="height: 1.72" position="8.20 0 24.00" rotation="0 90 0">
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/James_idle.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18"></a-entity>
 <a-entity animation-mixer="clip: *; loop: repeat;" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/James_walk.glb" mixamo-mat-fix="desat: 0.55; darken: 0.18" visible="false"></a-entity>
 </a-entity>
-<a-entity hide-placeholder-when-ready="" id="CHAR_LEO" npc-gallery-walker="name: LEO; speed: 0.92; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_mid, #wp_s3_mid2, #wp_s3_exit, #wp_s4_entry, #wp_s4_mid, #wp_s4_back, #wp_s4_dc, #wp_s3_a1, #wp_s3_a2, #wp_s3_c1, #wp_s3_c2, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_dc, #wp_s3_b1, #wp_s3_b2, #wp_s3_b3, #wp_s3_b4, #wp_s3_b5, #wp_s4_a1, #wp_s4_a5a6, #wp_photo_label; meetSelector: .meet; meetChance: 0.03; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; modelYaw: 0" npc-uniform-scale="height: 1.74" position="10.60 0 13.20" rotation="0 -90 0">
-<a-entity animation-mixer="clip: *; loop: repeat" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/leo_idle.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0"></a-entity><a-entity animation-mixer="clip: *; loop: repeat" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/leo_walk.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0" visible="false"></a-entity></a-entity><a-entity hide-placeholder-when-ready="" id="CHAR_SUZIE" npc-gallery-walker="name: SUZIE; speed: 0.86; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_mid, #wp_s3_mid2, #wp_s3_exit, #wp_s4_entry, #wp_s4_mid, #wp_s4_back, #wp_s4_dc, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_dc, #wp_s4_entry, #wp_s3_b1, #wp_s3_b2, #wp_s3_b3, #wp_s3_b4, #wp_s3_b5, #wp_s4_a1, #wp_s4_a5a6, #wp_photo_label; meetSelector: .meet; meetChance: 0.04; meetCooldown: 90; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; modelYaw: 0" npc-uniform-scale="height: 1.68" position="7.00 0 24.20" rotation="0 160 0">
+<a-entity hide-placeholder-when-ready="" id="CHAR_LEO" npc-gallery-walker="name: LEO; speed: 0.92; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_mid, #wp_s3_mid2, #wp_s3_exit, #wp_s4_entry, #wp_s4_mid, #wp_s4_back, #wp_s4_dc, #wp_s3_a1, #wp_s3_a2, #wp_s3_c1, #wp_s3_c2, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_dc; meetSelector: .meet; meetChance: 0.05; meetCooldown: 80; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; modelYaw: 0" npc-uniform-scale="height: 1.74" position="10.60 0 13.20" rotation="0 -90 0">
+<a-entity animation-mixer="clip: *; loop: repeat" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/leo_idle.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0"></a-entity><a-entity animation-mixer="clip: *; loop: repeat" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/leo_walk.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0" visible="false"></a-entity></a-entity><a-entity hide-placeholder-when-ready="" id="CHAR_SUZIE" npc-gallery-walker="name: SUZIE; speed: 0.86; waypoints: #wp_c1, #wp_c2, #wp_conn1, #wp_conn2, #wp_s3_mid, #wp_s3_mid2, #wp_s3_exit, #wp_s4_entry, #wp_s4_mid, #wp_s4_back, #wp_s4_dc, #wp_s4_a2, #wp_s4_a4, #wp_s4_wall, #wp_s4_dc, #wp_s4_entry, #wp_cor_mid1, #wp_cor_mid2, #wp_cor_mid3, #wp_cor_mid4, #wp_photo_label, #wp_cor_l1, #wp_cor_l2, #wp_cor_l3, #wp_cor_r1, #wp_cor_r2, #wp_cor_r3, #wp_cor_end1, #wp_cor_end2, #wp_cor_end3, #wp_cor_end4, #wp_cor_end5; meetSelector: .meet; meetChance: 0.04; meetCooldown: 90; artWaitMin: 25; artWaitMax: 85; connWaitMin: 0.2; connWaitMax: 3.5; modelYaw: 0" npc-uniform-scale="height: 1.68" position="6.10 0 26.10" rotation="0 180 0">
 <a-entity animation-mixer="clip: *; loop: repeat" class="npc-idle npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/suzie_idle.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0"></a-entity><a-entity animation-mixer="clip: *; loop: repeat" class="npc-walk npc-model" gltf-model="https://cdn.jsdelivr.net/gh/epoliluisito/museum-models@main/characters/suzie_walk.glb" mixamo-mat-fix="desat: 0.62; darken: 0.1; matte: 1.0" visible="false"></a-entity></a-entity>
 </a-entity>
 <!-- ===== END CHARACTERS ===== -->
@@ -5411,6 +5292,8 @@ AFRAME.registerComponent('pbr-carpet', {
   const AUDIO_STATUS = document.getElementById('audioStatus');
 
   const QUIT = document.getElementById('quitBtn');
+  const QUIT_SHELL = document.getElementById('quitShell');
+  const NPC_HUD = document.getElementById('npcHud');
   const QC = document.getElementById('quitConfirm');
   const Q_CANCEL = document.getElementById('quitCancel');
   const Q_OK = document.getElementById('quitConfirmBtn');
@@ -5420,6 +5303,10 @@ AFRAME.registerComponent('pbr-carpet', {
   let audioEnabled = false;
   let introStarted = false;
   let introFinished = false;
+
+  // Hide stray UI during initial boot/loading as well.
+  try { if (QUIT_SHELL) QUIT_SHELL.style.display = 'none'; } catch(e) {}
+  try { if (NPC_HUD) NPC_HUD.style.display = 'none'; } catch(e) {}
 
   function safePlay(media) {
     if (!media) return Promise.resolve();
@@ -5477,6 +5364,9 @@ AFRAME.registerComponent('pbr-carpet', {
   }
 
   function showIntro() {
+    // Hide stray UI during waiting/intro (prevents the two empty boxes bottom-left).
+    try { if (QUIT_SHELL) QUIT_SHELL.style.display = 'none'; } catch(e) {}
+    try { if (NPC_HUD) NPC_HUD.style.display = 'none'; } catch(e) {}
     if (BOOT) BOOT.classList.add('hide');
 
     if (INTRO) {
@@ -5557,6 +5447,10 @@ AFRAME.registerComponent('pbr-carpet', {
       try { if (WALKING) WALKING.currentTime = 0; } catch(e){}
 
       window.__fearRoomActive = true;
+
+      // Restore UI once we're in the room.
+      try { if (QUIT_SHELL) QUIT_SHELL.style.display = ''; } catch(e) {}
+      try { if (NPC_HUD) NPC_HUD.style.display = ''; } catch(e) {}
 
 
       try { window.dispatchEvent(new Event('fearroom-activate')); } catch (e) {}
