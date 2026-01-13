@@ -5666,7 +5666,7 @@ AFRAME.registerComponent('pbr-carpet', {
       rig.object3D.getWorldPosition(a);
       elevator.object3D.getWorldPosition(b);
       // Activation radius in meters (tuned for this scene)
-      return a.distanceTo(b) < 6.0;
+      return a.distanceTo(b) < 12.0;
     }
 
     function getMarkerPose(marker){
@@ -5737,7 +5737,12 @@ AFRAME.registerComponent('pbr-carpet', {
     }
 
     function closeDoors(elevator){
-      elevator.emit('elevator1-close');
+      if (!elevator) return;
+      const et = elevator.components && elevator.components['elevator-toggle'];
+      // Close only if currently open; elevator-toggle listens to elevator1-toggle.
+      if (!et || et.isOpen === true){
+        elevator.emit('elevator1-toggle');
+      }
     }
 
     function ensureRideVideoSource(){
@@ -5865,17 +5870,6 @@ function lockControls(rig, cam, locked){
       }
 
       if (state === 'idle'){
-        if (!doorsOpen){
-          setHint('Open the elevator doors with E, then press F.');
-          setTimeout(()=>setHint(''), 1200);
-          return;
-        }
-        if (!near){
-          setHint('Move closer to the elevator, then press F.');
-          setTimeout(()=>setHint(''), 1200);
-          return;
-        }
-
         // Immediate feedback + start moving right away.
         setHint('Autopilot engaged…');
         fadeOutMedia();
@@ -5907,12 +5901,6 @@ function lockControls(rig, cam, locked){
       }
 
       if (state === 'armed'){
-        if (!doorsOpen){
-          setHint('Open the doors with E to confirm descent.');
-          setTimeout(()=>setHint(''), 1200);
-          return;
-        }
-
         // Second press confirms: close doors + fade to ride video.
         setHint('');
         suppressGuide(true);      // user guide must disappear during the ride
@@ -5947,7 +5935,7 @@ function lockControls(rig, cam, locked){
     window.addEventListener('keydown', (e) => {
       if (e.repeat) return;
       if (isEditableTarget(e.target)) return;
-      if (e.key === 'f' || e.key === 'F'){
+      if (e.code === 'KeyF' || e.key === 'f' || e.key === 'F'){
         e.preventDefault();
         handleFKey();
       }
