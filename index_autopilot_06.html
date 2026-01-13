@@ -2102,7 +2102,7 @@ const far = this.data.avoidDist;
 <li><strong>Look:</strong> Mouse</li>
 <li><strong>Unlock mouse (optional):</strong> Press <strong>ESC</strong> to release the cursor</li>
 <li><strong>Elevator doors:</strong> Press <span class="keycap">E</span> to open/close</li>
-<li><strong>Descend:</strong> Step inside, doors open, then press <span class="keycap keycap-ask">F</span></li>
+<li><strong>Activate elevator:</strong> Open doors with <span class="keycap">E</span>, then press <span class="keycap keycap-ask">F</span></li>
 </ul>
 <p class="muted" id="elevatorChoice">To descend: enter the elevator, then press <span class="keycap keycap-ask">F</span>. The doors will close and the elevator ride video will play.</p>
 <p class="muted">Step back to dismiss this guide.</p>
@@ -5589,6 +5589,30 @@ AFRAME.registerComponent('pbr-carpet', {
         try { v.muted = true; v.volume = 0; } catch(e){}
         try { v.pause(); } catch(e){}
       }
+      // Fade out any A-Frame sound components (THREE.Audio) as well.
+      const sceneEl = document.querySelector('a-scene');
+      if (sceneEl){
+        const soundEls = sceneEl.querySelectorAll('[sound]');
+        soundEls.forEach(el => {
+          const comp = el.components && el.components.sound;
+          if (!comp) return;
+          const startVol = (comp.data && typeof comp.data.volume === 'number') ? comp.data.volume : 1.0;
+          const dur = 2500; // 2.5s
+          const t0 = performance.now();
+          const step = (t) => {
+            const k = Math.min(1, (t - t0) / dur);
+            const vol = startVol * (1 - k);
+            try { el.setAttribute('sound', 'volume', Math.max(0, vol)); } catch(e){}
+            if (k < 1) requestAnimationFrame(step);
+            else {
+              try { el.setAttribute('sound', 'volume', 0); } catch(e){}
+              try { comp.stopSound(); } catch(e){}
+            }
+          };
+          requestAnimationFrame(step);
+        });
+      }
+
     }
 
     let _doorHooked = false;
@@ -5633,6 +5657,16 @@ AFRAME.registerComponent('pbr-carpet', {
         p.x > -0.95 && p.x < 0.95 &&
         p.z > -1.80 && p.z < 0.65
       );
+    }
+
+    function isNearElevator(rig, elevator){
+      if (!rig || !elevator) return false;
+      const a = new THREE.Vector3();
+      const b = new THREE.Vector3();
+      rig.object3D.getWorldPosition(a);
+      elevator.object3D.getWorldPosition(b);
+      // Activation radius in meters (tuned for this scene)
+      return a.distanceTo(b) < 6.0;
     }
 
     function getMarkerPose(marker){
@@ -5804,66 +5838,105 @@ function lockControls(rig, cam, locked){
       hint.innerHTML = msg;
     }
 
+    
     function handleFKey(){
       const refs = setupElevatorFrame();
       if (!refs) return;
       const { elevator, rig, cam, marker } = refs;
 
-      // Door open state is tracked from the door event contract.
       const doorsOpen = isOpen;
-      const inside = isInsideElevator(rig, elevator);
+
+      // We no longer require the player to already be inside the cab.
+      // Pressing F (with doors open) triggers autopilot to bring them into the exact ride frame.
+      const near = isNearElevator(rig, elevator);
+
+      // Helper: update the guide to the "confirm" message once we reach the ride pose.
+      function setConfirmGuide(){
+        const choice = document.getElementById('elevatorChoice');
+        if (choice){
+          choice.textContent = 'Press F again to confirm descent.';
+        }
+      }
+      function setDefaultGuide(){
+        const choice = document.getElementById('elevatorChoice');
+        if (choice){
+          choice.textContent = 'Press F to activate the elevator when the doors are open. Autopilot will move you into position.';
+        }
+      }
 
       if (state === 'idle'){
-        if (!doorsOpen || !inside){
-          setHint('Open the doors with E, step inside, then press F.');
+        if (!doorsOpen){
+          setHint('Open the elevator doors with E, then press F.');
+          setTimeout(()=>setHint(''), 1200);
+          return;
+        }
+        if (!near){
+          setHint('Move closer to the elevator, then press F.');
           setTimeout(()=>setHint(''), 1200);
           return;
         }
 
         // Immediate feedback + start moving right away.
-        setHint('Entering ride position…');
+        setHint('Autopilot engaged…');
         fadeOutMedia();
         lockControls(rig, cam, true);
+        setDefaultGuide();
 
         state = 'moving';
-        animateRigToMarker(rig, cam, marker, 2000, () => {
-          // Close doors once positioned.
-          closeDoors(elevator);
 
-          // After the close animation, ask for confirmation.
-          setTimeout(() => {
-            setHint('Press F again to confirm descent.');
-            setGuideConfirm();
-            state = 'armed';
-          }, 700);
+        // Duration scales with distance so it "takes as many seconds as it needs".
+        const cur = new THREE.Vector3();
+        rig.object3D.getWorldPosition(cur);
+        const target = getMarkerPose(marker).pos;
+        const dist = cur.distanceTo(target);
+        const speed = 1.15; // m/s
+        const durMs = Math.max(900, Math.min(5000, (dist / speed) * 1000));
+
+        animateRigToMarker(rig, cam, marker, durMs, () => {
+          // Arrived at the exact ride frame: inside, facing outward, leveled.
+          state = 'armed';
+          setHint(''); // keep it clean; guide now prompts the second F.
+          setConfirmGuide();
         });
-
         return;
       }
 
       if (state === 'moving'){
-        // ignore repeated presses during autopilot
+        // Ignore; autopilot is already in progress.
         return;
       }
 
       if (state === 'armed'){
-        // Confirm: start the ride video. Keep controls locked.
-        state = 'riding';
+        if (!doorsOpen){
+          setHint('Open the doors with E to confirm descent.');
+          setTimeout(()=>setHint(''), 1200);
+          return;
+        }
+
+        // Second press confirms: close doors + fade to ride video.
         setHint('');
-        // Ensure doors are closed (idempotent) then fade to video.
+        suppressGuide(true);      // user guide must disappear during the ride
+        setHint('');             // hide hint too
         closeDoors(elevator);
+
+        state = 'riding';
+
+        // Start video immediately in the same keypress gesture.
         playRideVideo(() => {
-            // End of test: unlock controls again
-            lockControls(rig, cam, false);
-            state = 'idle';
-            setHint('Ride complete (test).');
-            setTimeout(()=>setHint(''), 1500);
-          });
+          // End of test: unlock controls again
+          lockControls(rig, cam, false);
+          state = 'idle';
+          restoreGuide();
+          setDefaultGuide();
+          setHint('Ride complete (test).');
+          setTimeout(()=>setHint(''), 1500);
+        });
         return;
       }
 
       // riding: ignore
     }
+
 
     // Patch the proximity UI component so we can suppress the guide during the ride.
     // (The component toggles the 'show' class; we keep display:none to force hide.)
