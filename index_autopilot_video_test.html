@@ -748,6 +748,30 @@ AFRAME.registerComponent('light-beam', {
   }
 
 
+
+
+/* ===== Elevator Ride Overlay (video transition) ===== */
+#rideOverlay{
+  position: fixed; inset: 0;
+  z-index: 500;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  opacity: 0;
+  transition: opacity 520ms ease;
+}
+#rideOverlay.show{ display:flex; }
+#rideOverlay.fadein{ opacity: 1; }
+#rideVideo{
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 700ms ease;
+}
+#rideOverlay.video-on #rideVideo{ opacity: 1; }
+
   /* Quit UI */
   #quitShell{
     position: fixed;
@@ -2080,11 +2104,14 @@ const far = this.data.avoidDist;
 <li><strong>Elevator doors:</strong> Press <span class="keycap">E</span> to open/close</li>
 <li><strong>Descend:</strong> Step inside, doors open, then press <span class="keycap keycap-ask">F</span></li>
 </ul>
-<p class="muted" id="elevatorChoice">To descend: enter the elevator, then press <span class="keycap keycap-ask">F</span>. The doors will close and the view will lock for a screenshot.</p>
+<p class="muted" id="elevatorChoice">To descend: enter the elevator, then press <span class="keycap keycap-ask">F</span>. The doors will close and the elevator ride video will play.</p>
 <p class="muted">Step back to dismiss this guide.</p>
 </div>
 <!-- ===== END UI OVERLAY ===== -->
 <div id="hint" style="display:none"></div>
+<div id="rideOverlay" aria-hidden="true">
+  <video id="rideVideo" playsinline webkit-playsinline preload="auto" crossorigin="anonymous"></video>
+</div>
 <!-- ===== ERA ORA Intro / Loading UI ===== -->
 <div aria-live="polite" id="bootScreen" role="status">
 <div id="bootInner">
@@ -5533,35 +5560,166 @@ AFRAME.registerComponent('pbr-carpet', {
         );
       }
 
-      function snapRigToMarker(){
-        // Position (feet)
-        const wp = marker.object3D.getWorldPosition(_tmpW);
+      function getMarkerPose(){
+  const wp = marker.object3D.getWorldPosition(_tmpW);
+  marker.object3D.getWorldQuaternion(_tmpQuat);
+  _tmpEuler.setFromQuaternion(_tmpQuat, 'YXZ');
+  const yawDeg = _tmpEuler.y * 180 / Math.PI;
+  return { pos: {x: wp.x, y: wp.y, z: wp.z}, yaw: yawDeg };
+}
 
-        // Rotation: take marker yaw in world space.
-        marker.object3D.getWorldQuaternion(_tmpQuat);
-        _tmpEuler.setFromQuaternion(_tmpQuat, 'YXZ');
-        const yawDeg = _tmpEuler.y * 180 / Math.PI;
+function setRigPose(p, yawDeg){
+  rig.setAttribute('position', p);
+  rig.setAttribute('rotation', { x: 0, y: yawDeg, z: 0 });
 
-        rig.setAttribute('position', { x: wp.x, y: wp.y, z: wp.z });
-        rig.setAttribute('rotation', { x: 0, y: yawDeg, z: 0 });
+  // Level the camera.
+  cam.setAttribute('rotation', { x: 0, y: 0, z: 0 });
 
-        // Level the camera.
-        cam.setAttribute('rotation', { x: 0, y: 0, z: 0 });
+  // Reset look-controls internals so it doesn't "snap back" to old pitch/yaw.
+  const lc = cam.components && cam.components['look-controls'];
+  if (lc) {
+    try { lc.yawObject.rotation.y = 0; } catch(e) {}
+    try { lc.pitchObject.rotation.x = 0; } catch(e) {}
+  }
+}
 
-        // Reset look-controls internals so it doesn't "snap back" to old pitch/yaw.
-        const lc = cam.components && cam.components['look-controls'];
-        if (lc) {
-          try { lc.yawObject.rotation.y = 0; } catch(e) {}
-          try { lc.pitchObject.rotation.x = 0; } catch(e) {}
-        }
-      }
+function easeInOutCubic(t){
+  return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3)/2;
+}
+
+function animateRigToMarker(durationMs, onDone){
+  const startPos = rig.getAttribute('position') || {x:0,y:0,z:0};
+  const startYaw = (rig.getAttribute('rotation') || {y:0}).y || 0;
+
+  const target = getMarkerPose();
+  const endPos = target.pos;
+  const endYaw = target.yaw;
+
+  // Freeze player movement + look during autopilot.
+  const rw = rig.components && rig.components['rig-walk'];
+  if (rw && rw.pause) rw.pause();
+  const lc = cam.components && cam.components['look-controls'];
+  if (lc && lc.pause) lc.pause();
+
+  // Ensure camera stays leveled throughout.
+  cam.setAttribute('rotation', { x: 0, y: 0, z: 0 });
+
+  const t0 = performance.now();
+  function step(now){
+    const t = Math.min(1, (now - t0) / durationMs);
+    const k = easeInOutCubic(t);
+
+    const p = {
+      x: startPos.x + (endPos.x - startPos.x) * k,
+      y: startPos.y + (endPos.y - startPos.y) * k,
+      z: startPos.z + (endPos.z - startPos.z) * k
+    };
+
+    // shortest-path yaw lerp
+    let dy = ((endYaw - startYaw + 540) % 360) - 180;
+    const y = startYaw + dy * k;
+
+    setRigPose(p, y);
+
+    if (t < 1) requestAnimationFrame(step);
+    else {
+      // Snap final exact pose (avoid floating point drift)
+      setRigPose(endPos, endYaw);
+      if (onDone) onDone();
+    }
+  }
+  requestAnimationFrame(step);
+}
 
       function closeDoors(){
         // Only toggle if currently open (so we don't accidentally open them).
         if (isOpen) elevator.emit('elevator1-toggle');
       }
 
-      function lockViewForScreenshot(){
+const rideOverlay = document.getElementById('rideOverlay');
+const rideVideo = document.getElementById('rideVideo');
+
+const RIDE_SRC_PRIMARY = './elevator_ride.mp4';
+const RIDE_SRC_FALLBACK = 'https://raw.githubusercontent.com/epoliluisito/museum-models/main/fear-room/video/elevator_ride.mp4';
+
+function ensureRideVideoSource(){
+  if (!rideVideo) return;
+  // Prefer local file; fallback to raw github if missing.
+  if (!rideVideo.getAttribute('data-src-set')) {
+    rideVideo.src = RIDE_SRC_PRIMARY;
+    rideVideo.setAttribute('data-src-set', '1');
+    rideVideo.addEventListener('error', () => {
+      // Swap to fallback once.
+      if (rideVideo.src && rideVideo.src.includes('raw.githubusercontent.com')) return;
+      rideVideo.src = RIDE_SRC_FALLBACK;
+      try { rideVideo.load(); } catch(e) {}
+    }, { once: true });
+  }
+}
+
+function showRideOverlay(){
+  if (!rideOverlay) return;
+  rideOverlay.classList.add('show');
+  // Force reflow so transitions apply.
+  void rideOverlay.offsetWidth;
+  rideOverlay.classList.add('fadein');
+}
+
+function hideRideOverlay(){
+  if (!rideOverlay) return;
+  rideOverlay.classList.remove('video-on');
+  rideOverlay.classList.remove('fadein');
+  setTimeout(() => {
+    rideOverlay.classList.remove('show');
+    rideOverlay.style.display = 'none';
+    rideOverlay.removeAttribute('style');
+  }, 600);
+}
+
+async function playRideVideo(){
+  ensureRideVideoSource();
+  if (!rideVideo || !rideOverlay) return;
+
+  showRideOverlay();
+  // Bring video up a beat after fade begins
+  setTimeout(() => rideOverlay.classList.add('video-on'), 240);
+
+  // Make sure audio is allowed (F is a user gesture, but resume context anyway)
+  try {
+    if (window.THREE && THREE.AudioContext && THREE.AudioContext.getContext) {
+      const c = THREE.AudioContext.getContext();
+      if (c && c.state === 'suspended') await c.resume();
+    }
+  } catch(e){}
+
+  try { rideVideo.currentTime = 0; } catch(e){}
+  try {
+    await rideVideo.play();
+  } catch(e){
+    // If autoplay blocks for some reason, still show black and prompt
+    setHint('Press any key/click to start the ride video.');
+    const kick = async () => {
+      try { await rideVideo.play(); } catch(e2){}
+      window.removeEventListener('pointerdown', kick, true);
+      window.removeEventListener('keydown', kick, true);
+    };
+    window.addEventListener('pointerdown', kick, true);
+    window.addEventListener('keydown', kick, true);
+  }
+
+  // End: fade out and stop.
+  rideVideo.onended = () => {
+    rideOverlay.classList.remove('video-on');
+    rideOverlay.classList.remove('fadein');
+    setTimeout(() => {
+      hideRideOverlay();
+      setHint('Ride complete (test).');
+    }, 700);
+  };
+}
+
+function lockViewForScreenshot(){
+
         // Freeze movement.
         const rw = rig.components && rig.components['rig-walk'];
         if (rw && rw.pause) rw.pause();
@@ -5588,13 +5746,20 @@ AFRAME.registerComponent('pbr-carpet', {
 
         if (e.preventDefault) e.preventDefault();
 
-        // Autopilot: snap → close doors → lock.
-        setHint('Descending…');
-        snapRigToMarker();
-        closeDoors();
+// Autopilot: move → close doors → (after close) start ride video.
+setHint('Descending…');
 
-        // Door close animation is 520ms; wait slightly longer, then lock.
-        setTimeout(lockViewForScreenshot, 650);
+// Smooth move to the canonical frame (2.0s)
+animateRigToMarker(2000, () => {
+  closeDoors();
+
+  // Wait for door close animation (520ms) + a tiny beat, then start the ride video.
+  setTimeout(() => {
+    setHint(''); // clear
+    // Keep controls locked during the ride.
+    playRideVideo();
+  }, 700);
+});
       }, true);
     }
 
