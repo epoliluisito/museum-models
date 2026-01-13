@@ -5725,39 +5725,56 @@ AFRAME.registerComponent('pbr-carpet', {
 
     function showRideOverlay(){
       const ov = document.getElementById('rideOverlay');
-      if (ov) ov.classList.add('show');
+      if (!ov) return;
+      ov.classList.add('show');
+      // Ensure transition kicks in on next frame
+      requestAnimationFrame(() => ov.classList.add('fadein'));
     }
 
     function hideRideOverlay(){
       const ov = document.getElementById('rideOverlay');
-      if (ov) ov.classList.remove('show');
+      if (!ov) return;
+      ov.classList.remove('video-on');
+      ov.classList.remove('fadein');
+      // allow fade-out before removing from flow
+      setTimeout(() => ov.classList.remove('show'), 550);
     }
 
     function playRideVideo(onEnd){
       const v = ensureRideVideoSource();
       if (!v) return;
 
+      // Hide the USER GUIDE during ride
       suppressGuide(true);
 
+      const ov = document.getElementById('rideOverlay');
       showRideOverlay();
+
+      // Make sure video is visible once the overlay is up.
+      if (ov) {
+        requestAnimationFrame(() => ov.classList.add('video-on'));
+      }
+
       try { v.currentTime = 0; } catch(e){}
+      try { v.load(); } catch(e){}
+
       const p = v.play();
       if (p && p.catch) p.catch(()=>{});
 
       const ended = () => {
         v.removeEventListener('ended', ended);
-        // brief fade-out then restore UI for test
+        // Fade out overlay then restore UI for test
+        hideRideOverlay();
         setTimeout(() => {
-          hideRideOverlay();
           suppressGuide(false);
           restoreGuide();
           if (onEnd) onEnd();
-        }, 300);
+        }, 650);
       };
       v.addEventListener('ended', ended);
     }
 
-    function lockControls(rig, cam, locked){
+function lockControls(rig, cam, locked){
       const rw = rig.components && rig.components['rig-walk'];
       if (rw){
         if (locked && rw.pause) rw.pause();
