@@ -5599,6 +5599,9 @@ AFRAME.registerComponent('pbr-carpet', {
       const rig = document.querySelector('#rig');
       const cam = document.querySelector('#playerCam');
       const marker = document.querySelector('#elevator1_rideMarker');
+      // Initialize door state if elevator-toggle component already exists (e.g., doors opened before first F press)
+      const et = elevator && elevator.components && elevator.components['elevator-toggle'];
+      if (et && typeof et.isOpen === 'boolean') { isOpen = et.isOpen; }
 
       const doorL = document.querySelector('#elevator1_door_L');
       if (doorL && !_doorHooked){
@@ -5606,6 +5609,13 @@ AFRAME.registerComponent('pbr-carpet', {
         doorL.addEventListener('elevator1-open', () => { isOpen = true; });
         doorL.addEventListener('elevator1-close', () => { isOpen = false; });
       }
+        // Also update from elevator-toggle state after each toggle (backup)
+        if (elevator){
+          elevator.addEventListener('elevator1-toggle', () => {
+            const et = elevator.components && elevator.components['elevator-toggle'];
+            if (et && typeof et.isOpen === 'boolean') isOpen = et.isOpen;
+          });
+        }
       if (!elevator || !rig || !cam || !marker) return null;
       return { elevator, rig, cam, marker };
     }
