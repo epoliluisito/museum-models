@@ -2067,6 +2067,34 @@ const far = this.data.avoidDist;
 })();
 </script>
 <!-- ===== END NPC SYSTEM ===== -->
+
+<style>
+  /* ===== Elevator ride fullscreen video overlay ===== */
+  #elevatorVideoOverlay{
+    position: fixed;
+    inset: 0;
+    display: none;           /* toggled on demand */
+    align-items: center;
+    justify-content: center;
+    background: #000;
+    z-index: 99999;          /* above A-Frame canvas */
+    opacity: 0;
+    pointer-events: none;
+  }
+  #elevatorVideoOverlay.active{
+    display: flex;
+    pointer-events: auto;
+  }
+  #elevatorVideoOverlay video{
+    width: 100vw;
+    height: 100vh;
+    object-fit: cover;
+    background: #000;
+  }
+  #elevatorVideoOverlay.fadeIn{ transition: opacity 250ms ease; opacity: 1; }
+  #elevatorVideoOverlay.fadeOut{ transition: opacity 450ms ease; opacity: 0; }
+</style>
+
 </head>
 <body>
 <!-- ===== UI OVERLAY: Elevator User Guide (outside A-Frame canvas) ===== -->
@@ -6107,6 +6135,7 @@ AFRAME.registerComponent('pbr-carpet', {
     hideGuide();
 
     overlay.style.pointerEvents = 'auto';
+    overlay.style.display = 'flex';
     overlay.classList.add('active');
     overlay.classList.remove('fadeOut');
     overlay.classList.add('fadeIn');
@@ -6131,7 +6160,7 @@ AFRAME.registerComponent('pbr-carpet', {
     rideVideo.onended = () => {
       overlay.classList.remove('fadeIn');
       overlay.classList.add('fadeOut');
-      setTimeout(()=>{ window.location.href = './rooms/aya.dev.html'; }, 650);
+      setTimeout(()=>{ overlay.style.display = 'none'; window.location.href = './rooms/aya.dev.html'; }, 650);
     };
   }
 
