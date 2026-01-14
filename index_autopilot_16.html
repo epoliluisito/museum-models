@@ -2108,7 +2108,315 @@ const far = this.data.avoidDist;
 <!-- ===== END NPC SYSTEM ===== -->
 
 <script>
-// ===== Aya room minimal required components/geometries (safe-guarded) =====
+// ===== <script>
+// ===== Restored FEAR_ROOM components required by the scene (guards) =====
+(function(){
+  if (!window.AFRAME) return;
+  if (!AFRAME.components['floor-rock-scatter']) {
+  AFRAME.registerComponent('floor-rock-scatter', {
+      schema: {
+        center: {type: 'vec3', default: {x: 0, y: 0, z: 0}},
+        y: {type: 'number', default: 0.02},
+    
+        count: {type: 'int', default: 110},
+        heroCount: {type: 'int', default: 7},
+    
+        // Scatter region
+        rMin: {type: 'number', default: 6.0},
+        rMax: {type: 'number', default: 15.8},
+    
+        // Cluster shaping
+        clusterCount: {type: 'int', default: 9},
+        clusterRadius: {type: 'number', default: 1.55},
+        clusterTightness: {type: 'number', default: 0.72},
+    
+        // Jitter
+        planarJitter: {type: 'number', default: 0.55},
+        yJitter: {type: 'number', default: 0.03},
+    
+        // Rock size
+        scaleMin: {type: 'number', default: 0.05},
+        scaleMax: {type: 'number', default: 0.14},
+        heroScaleMin: {type: 'number', default: 0.22},
+        heroScaleMax: {type: 'number', default: 0.38},
+    
+        // Shading
+        color1: {type: 'color', default: '#1a1a1a'},
+        color2: {type: 'color', default: '#2a2a2a'},
+        roughness: {type: 'number', default: 0.88},
+        metalness: {type: 'number', default: 0.0},
+    
+        seed: {type: 'int', default: 77}
+      },
+    
+      init: function () {
+        this._build();
+      },
+    
+      update: function () {
+        this._build();
+      },
+    
+      remove: function () {
+        while (this.el.firstChild) this.el.removeChild(this.el.firstChild);
+      },
+    
+      _rng: function (seed) {
+        // mulberry32
+        let t = seed >>> 0;
+        return function () {
+          t += 0x6D2B79F5;
+          let r = Math.imul(t ^ (t >>> 15), 1 | t);
+          r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+          return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+        };
+      },
+    
+      _lerp: function (a, b, t) { return a + (b - a) * t; },
+    
+      _build: function () {
+        const d = this.data;
+    
+        // Clear existing children.
+        while (this.el.firstChild) this.el.removeChild(this.el.firstChild);
+    
+        const rand = this._rng(d.seed);
+        const cx = d.center.x, cy = d.center.y, cz = d.center.z;
+    
+        // Precompute cluster centers across the region.
+        const clusters = [];
+        for (let i = 0; i < Math.max(1, d.clusterCount); i++) {
+          const a = rand() * Math.PI * 2;
+          const rr = this._lerp(d.rMin, d.rMax, Math.sqrt(rand()));
+          clusters.push({
+            x: cx + rr * Math.cos(a),
+            z: cz + rr * Math.sin(a)
+          });
+        }
+    
+        // Helper: random point in annulus (biased slightly outward for realism).
+        const sampleBase = () => {
+          const a = rand() * Math.PI * 2;
+          const u = rand();
+          // bias outward: u^0.65
+          const rr = this._lerp(d.rMin, d.rMax, Math.pow(u, 0.65));
+          return { x: cx + rr * Math.cos(a), z: cz + rr * Math.sin(a) };
+        };
+    
+        const makeRock = (isHero) => {
+          const rock = document.createElement('a-entity');
+    
+          // Geometry: lumpy but simple; detail 0 is cheapest and reads as a "stone" when scaled.
+          rock.setAttribute('geometry', 'primitive: icosahedron; radius: 1; detail: 0');
+    
+          // Mix between base scatter + clusters (prevents ring look).
+          const useCluster = rand() < 0.58;
+          let x, z;
+    
+          if (useCluster) {
+            const c = clusters[Math.floor(rand() * clusters.length)];
+            // sample within a soft disk around cluster center
+            const aa = rand() * Math.PI * 2;
+            const rr = d.clusterRadius * Math.sqrt(rand());
+            const tight = this._lerp(1.0, d.clusterTightness, rand());
+            x = c.x + rr * Math.cos(aa) * tight;
+            z = c.z + rr * Math.sin(aa) * tight;
+          } else {
+            const p = sampleBase();
+            x = p.x; z = p.z;
+          }
+    
+          // Add planar jitter (breaks any latent circularity).
+          x += (rand() - 0.5) * d.planarJitter;
+          z += (rand() - 0.5) * d.planarJitter;
+    
+          const y = d.y + (rand() - 0.5) * d.yJitter;
+    
+          rock.object3D.position.set(x, y, z);
+          rock.object3D.rotation.set(
+            (rand() - 0.5) * 0.35,
+            rand() * Math.PI * 2,
+            (rand() - 0.5) * 0.35
+          );
+    
+          const s = isHero
+            ? this._lerp(d.heroScaleMin, d.heroScaleMax, rand())
+            : this._lerp(d.scaleMin, d.scaleMax, rand());
+          const sx = s * this._lerp(0.85, 1.25, rand());
+          const sy = s * this._lerp(0.70, 1.15, rand());
+          const sz = s * this._lerp(0.85, 1.25, rand());
+          rock.object3D.scale.set(sx, sy, sz);
+    
+          // Material: subtle variance (still in the same family).
+          const t = rand();
+          const c = new THREE.Color(d.color1).lerp(new THREE.Color(d.color2), t);
+          rock.setAttribute('material',
+            `shader: standard; color: #${c.getHexString()}; roughness: ${d.roughness}; metalness: ${d.metalness}`
+          );
+    
+          rock.setAttribute('shadow', 'cast:false; receive:true');
+    
+          return rock;
+        };
+    
+        // Add rocks.
+        const total = Math.max(0, d.count | 0);
+        const heroN = Math.min(total, Math.max(0, d.heroCount | 0));
+    
+        for (let i = 0; i < total; i++) {
+          const isHero = (i < heroN);
+          this.el.appendChild(makeRock(isHero));
+        }
+      }
+    });
+  }
+  if (!AFRAME.components['glass-depthfix']) {
+  AFRAME.registerComponent('glass-depthfix', {
+        init: function () {
+          const apply = () => {
+            const mesh = this.el.getObject3D('mesh');
+            if (!mesh) return;
+            mesh.traverse((o) => {
+              if (!o.material) return;
+              const mats = Array.isArray(o.material) ? o.material : [o.material];
+              mats.forEach((m) => {
+                m.transparent = true;
+                m.depthWrite = false;
+                m.depthTest = true;
+                m.needsUpdate = true;
+              });
+            });
+          };
+          this.el.addEventListener('object3dset', apply);
+          this.el.addEventListener('loaded', apply);
+          apply();
+        }
+      });
+  }
+  if (!AFRAME.components['torch-flicker']) {
+  AFRAME.registerComponent('torch-flicker', {
+          schema: { base: {default: 2.6}, amp: {default: 0.9} },
+          init: function () {
+            this._seed = Math.random()*1000;
+          },
+          tick: function (t) {
+            const light = this.el.getObject3D('light');
+            if (!light) return;
+            const tt = (t * 0.001) + this._seed;
+            const f = (Math.sin(tt*7.2) + Math.sin(tt*11.5)*0.6 + Math.sin(tt*17.0)*0.35) / 1.95;
+            light.intensity = this.data.base + (f * this.data.amp);
+          }
+        });
+  }
+  if (!AFRAME.components['torch-gobo']) {
+  AFRAME.registerComponent('torch-gobo', {
+      schema: {
+        speed: { default: 0.85 },
+        strength: { default: 1.0 },
+        intensityJitter: { default: 0.08 }
+      },
+      init: function () {
+        this._seed = Math.random() * 1000;
+        this._last = 0;
+    
+        // Canvas gobo texture
+        const size = 256;
+        const c = document.createElement('canvas');
+        c.width = c.height = size;
+        const ctx = c.getContext('2d');
+    
+        this._canvas = c;
+        this._ctx = ctx;
+        this._tex = new THREE.CanvasTexture(c);
+        this._tex.wrapS = this._tex.wrapT = THREE.RepeatWrapping;
+        this._tex.repeat.set(1.25, 1.25);
+        this._tex.needsUpdate = true;
+    
+        this._draw(0);
+      },
+      _draw: function (t) {
+        const ctx = this._ctx;
+        const c = this._canvas;
+        const w = c.width, h = c.height;
+    
+        // Background (mostly dark)
+        ctx.clearRect(0, 0, w, h);
+        ctx.fillStyle = 'black';
+        ctx.fillRect(0, 0, w, h);
+    
+        // Soft, blobby “energy” shapes
+        const nBlobs = 10;
+        for (let i = 0; i < nBlobs; i++) {
+          const a = (i / nBlobs) * Math.PI * 2 + 0.6 * Math.sin(t * 0.9 + i * 1.7);
+          const r = 0.22 + 0.10 * Math.sin(t * 0.7 + i * 2.3);
+          const cx = 0.5 + 0.32 * Math.cos(a);
+          const cy = 0.5 + 0.32 * Math.sin(a);
+    
+          const gx = cx * w;
+          const gy = cy * h;
+          const gr = r * w;
+    
+          const g = ctx.createRadialGradient(gx, gy, gr * 0.08, gx, gy, gr);
+          g.addColorStop(0.0, 'rgba(255,255,255,0.90)');
+          g.addColorStop(0.55, 'rgba(255,255,255,0.24)');
+          g.addColorStop(1.0, 'rgba(255,255,255,0.00)');
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.arc(gx, gy, gr, 0, Math.PI * 2);
+          ctx.fill();
+        }
+    
+        // Subtle streaks (adds readable motion in shadows)
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+        ctx.lineWidth = 2;
+        for (let i = 0; i < 6; i++) {
+          const y = (h * (i + 0.5)) / 6 + 18 * Math.sin(t * 1.2 + i * 0.9);
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.bezierCurveTo(w * 0.35, y - 18, w * 0.65, y + 18, w, y);
+          ctx.stroke();
+        }
+        ctx.globalCompositeOperation = 'source-over';
+    
+        this._tex.needsUpdate = true;
+      },
+      tick: function (ms) {
+        const light = this.el.getObject3D('light');
+        if (!light || !light.isSpotLight) return;
+    
+        const t = ms * 0.001 + this._seed;
+    
+        // Update the drawn pattern at a modest rate (stability + perf)
+        if (ms - this._last > 45) {
+          this._draw(t);
+          this._last = ms;
+        }
+    
+        // Apply as gobo
+        light.map = this._tex;
+    
+        // Gentle, irregular modulation (mostly from gobo transform, not intensity)
+        const wob = (Math.sin(t * 2.7) + Math.sin(t * 4.9 + 1.7) * 0.6) / 1.6;
+        this._tex.offset.x = (0.10 * Math.sin(t * this.data.speed * 0.9) + 0.06 * wob) % 1;
+        this._tex.offset.y = (0.12 * Math.cos(t * this.data.speed * 1.1) - 0.05 * wob) % 1;
+        this._tex.rotation = 0.12 * Math.sin(t * this.data.speed * 0.7);
+    
+        // Keep light intensity mostly stable; tiny jitter only
+        if (this._baseIntensity == null) this._baseIntensity = light.intensity;
+        const base = this._baseIntensity;
+        const j = this.data.intensityJitter * wob;
+        light.intensity = Math.max(0.0, base * (1.0 + j));
+      },
+      remove: function () {
+        try { if (this._tex) this._tex.dispose(); } catch (e) {}
+      }
+    });
+  }
+})();
+</script>
+
+Aya room minimal required components/geometries (safe-guarded) =====
 (function(){
   if (!window.AFRAME) return;
   if (!AFRAME.components['uv2-from-uv']) {
