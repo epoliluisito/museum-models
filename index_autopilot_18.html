@@ -2676,9 +2676,7 @@ const far = this.data.avoidDist;
             this._applied = true;
           }
         });
-  
-      })();
-  
+
   // Shared constants required by index.html components
         const DEG2RAD = Math.PI / 180;
         const EPS = 0.001;
@@ -3638,36 +3636,71 @@ const far = this.data.avoidDist;
     console.log('[Loader] Loaded fragment:', url);
   }
 
-  
-  function adoptInitialLevelIntoLevelRoot(){
-    try{
-      const scene = document.querySelector('a-scene');
-      const levelRoot = document.getElementById('levelRoot');
-      if (!scene || !levelRoot) return;
-      // Only do this once.
-      if (levelRoot.dataset.initialized === '1') return;
-      levelRoot.dataset.initialized = '1';
 
-      const KEEP_IDS = new Set(['rig','industrial_elevator_1','levelRoot']);
-      const toMove = [];
-      Array.from(scene.children).forEach((el)=>{
-        if (!el || !el.tagName) return;
-        const tag = el.tagName.toLowerCase();
-        if (tag === 'a-assets') return;
-        const id = el.getAttribute && el.getAttribute('id');
-        if (id && KEEP_IDS.has(id)) return;
-        // Keep the camera/rig and elevator persistent; everything else is level content.
-        toMove.push(el);
-      });
-      toMove.forEach(el=> levelRoot.appendChild(el));
-      console.log('[LevelRoot] Adopted initial level children:', toMove.length);
-    }catch(err){
-      console.warn('[LevelRoot] adopt failed', err);
-    }
+
+// ---- Level swapping helpers (Fear Room -> Aya) ----
+// Move the initial (Fear Room) scene content under #levelRoot so it can be swapped out cleanly.
+function adoptInitialLevelIntoRoot(){
+  const scene = document.querySelector('a-scene');
+  const root = document.getElementById('levelRoot');
+  if (!scene || !root) return;
+
+  const keepIds = new Set(['levelRoot','rig','industrial_elevator_1']);
+  const kids = Array.from(scene.children);
+
+  kids.forEach(el=>{
+    if (!el || el.nodeType !== 1) return;
+    const tag = (el.tagName || '').toUpperCase();
+    if (tag === 'A-ASSETS') return;
+    if (keepIds.has(el.id)) return;
+    // Anything else is treated as level content.
+    root.appendChild(el);
+  });
+}
+
+let __AYA_PRELOAD_TEXT = null;
+let __AYA_PRELOAD_PROMISE = null;
+
+function preloadAyaFragment(){
+  if (__AYA_PRELOAD_PROMISE) return __AYA_PRELOAD_PROMISE;
+  __AYA_PRELOAD_PROMISE = fetch('./rooms/aya.fragment.html', {cache: 'no-store'})
+    .then(r => r.ok ? r.text() : null)
+    .then(t => { __AYA_PRELOAD_TEXT = t; return t; })
+    .catch(() => null);
+  return __AYA_PRELOAD_PROMISE;
+}
+
+async function loadFragmentFromText(htmlText){
+  const scene = document.querySelector('a-scene');
+  const levelRoot = document.getElementById('levelRoot');
+  if (!scene || !levelRoot) return;
+
+  const tpl = document.createElement('template');
+  tpl.innerHTML = htmlText || '';
+
+  let sceneAssets = scene.querySelector('a-assets');
+  if (!sceneAssets) {
+    sceneAssets = document.createElement('a-assets');
+    scene.insertBefore(sceneAssets, scene.firstChild);
   }
 
-onReady(function(){
-    adoptInitialLevelIntoLevelRoot();
+  const fragAssets = tpl.content.querySelector('a-assets');
+  if (fragAssets) {
+    Array.from(fragAssets.children).forEach(el=>{
+      const id = el.getAttribute('id');
+      if (id && document.getElementById(id)) return;
+      sceneAssets.appendChild(el.cloneNode(true));
+    });
+    fragAssets.remove();
+  }
+
+  while (levelRoot.firstChild) levelRoot.removeChild(levelRoot.firstChild);
+  levelRoot.appendChild(tpl.content.cloneNode(true));
+  console.log('[Loader] Loaded fragment (preloaded text).');
+}
+
+  onReady(function(){
+    adoptInitialLevelIntoRoot();
     window.__loadAyaFragment = () => loadFragment('./rooms/aya.fragment.html');
     window.addEventListener('keydown', (e)=>{
       if (e.code === 'KeyL' || e.key === 'l' || e.key === 'L') {
@@ -7491,93 +7524,7 @@ AFRAME.registerComponent('pbr-carpet', {
   const overlay = document.getElementById('elevatorVideoOverlay');
   const rideVideo = document.getElementById('elevatorRideVideo');
 
-  const AYA_FRAGMENT_URL = './rooms/aya.fragment.html';
-  let _ayaPreloadPromise = null;
-  let _ayaPreloadedText = null;
-  function preloadAyaFragment(){
-    if (_ayaPreloadPromise) return _ayaPreloadPromise;
-    _ayaPreloadPromise = fetch(AYA_FRAGMENT_URL, {cache: 'no-store'}).then(r=>{
-      if(!r.ok) throw new Error('fetch ' + r.status);
-      return r.text();
-    }).then(t=>{ _ayaPreloadedText = t; return t; }).catch(err=>{
-      console.warn('[Aya] preload failed', err);
-      _ayaPreloadPromise = null;
-      return null;
-    });
-    return _ayaPreloadPromise;
-  }
-  async function injectAyaFragmentText(text){
-    if (!text) return false;
-    const scene = document.querySelector('a-scene');
-    const levelRoot = document.getElementById('levelRoot');
-    if (!scene || !levelRoot) return false;
-
-    const tpl = document.createElement('template');
-    tpl.innerHTML = text;
-
-    // Merge any <a-assets> from fragment.
-    const fragAssets = tpl.content.querySelector('a-assets');
-    let sceneAssets = scene.querySelector('a-assets');
-    if (!sceneAssets) {
-      sceneAssets = document.createElement('a-assets');
-      scene.insertBefore(sceneAssets, scene.firstChild);
-    }
-    if (fragAssets) {
-      const seen = new Set(Array.from(sceneAssets.children).map(n => n.id).filter(Boolean));
-      Array.from(fragAssets.children).forEach(n=>{
-        const id = n.id;
-        if (id && seen.has(id)) return;
-        sceneAssets.appendChild(n.cloneNode(true));
-      });
-      fragAssets.remove();
-    }
-
-    // Replace levelRoot contents.
-    while (levelRoot.firstChild) levelRoot.removeChild(levelRoot.firstChild);
-    levelRoot.appendChild(tpl.content.cloneNode(true));
-    return true;
-  }
-
-
-  
-  async function injectAyaFragmentText(fragmentText){
-    try{
-      const scene = document.querySelector('a-scene');
-      const levelRoot = document.getElementById('levelRoot');
-      if (!scene || !levelRoot) return false;
-
-      const tpl = document.createElement('template');
-      tpl.innerHTML = fragmentText;
-
-      // Merge <a-assets> from fragment if present.
-      let sceneAssets = scene.querySelector('a-assets');
-      if (!sceneAssets) {
-        sceneAssets = document.createElement('a-assets');
-        scene.insertBefore(sceneAssets, scene.firstChild);
-      }
-      const fragAssets = tpl.content.querySelector('a-assets');
-      if (fragAssets) {
-        fragAssets.querySelectorAll('*[id]').forEach((node)=>{
-          const id = node.getAttribute('id');
-          if (!id) return;
-          if (sceneAssets.querySelector('#' + CSS.escape(id))) return;
-          sceneAssets.appendChild(node.cloneNode(true));
-        });
-        fragAssets.remove();
-      }
-
-      // Swap level contents.
-      while (levelRoot.firstChild) levelRoot.removeChild(levelRoot.firstChild);
-      levelRoot.appendChild(tpl.content.cloneNode(true));
-
-      return true;
-    }catch(err){
-      console.warn('[Aya] inject error', err);
-      return false;
-    }
-  }
-
-if (!elevator || !rig || !cam || !doorL || !doorR || !guide || !guideChoice || !overlay || !rideVideo) return;
+  if (!elevator || !rig || !cam || !doorL || !doorR || !guide || !guideChoice || !overlay || !rideVideo) return;
 
   // --- helpers
   const DEG2RAD = Math.PI / 180;
@@ -7803,9 +7750,11 @@ if (!elevator || !rig || !cam || !doorL || !doorR || !guide || !guideChoice || !
   }
 
   function startOverlayVideo(){
-    preloadAyaFragment();
     // Hide guide immediately for immersion
     hideGuide();
+
+    // Preload next room while the ride plays
+    preloadAyaFragment();
 
     overlay.style.pointerEvents = 'auto';
     overlay.classList.add('active');
@@ -7826,59 +7775,65 @@ if (!elevator || !rig || !cam || !doorL || !doorR || !guide || !guideChoice || !
       });
     }
 
-    rideVideo.onended = () => {
-      // Fade out overlay then swap to Aya level.
-      overlay.classList.remove('fadeIn');
-      overlay.classList.add('fadeOut');
+    
+rideVideo.onended = async () => {
+  overlay.classList.remove('fadeIn');
+  overlay.classList.add('fadeOut');
 
-      // Ensure Aya is preloaded; if not, fetch now.
-      (async ()=>{
-        const txt = _ayaPreloadedText || await preloadAyaFragment();
-        // Hide overlay after fade.
-        setTimeout(async ()=>{
-          overlay.classList.remove('active');
-          overlay.style.pointerEvents = 'none';
+  // After fade-out, swap the level.
+  setTimeout(async ()=>{
+    overlay.classList.remove('active');
+    overlay.style.pointerEvents = 'none';
 
-          // Swap level content.
-          const ok = await injectAyaFragmentText(txt);
-          if (!ok) {
-            console.warn('[Aya] inject failed');
-            pauseMovement(false);
-            state = STATE.IDLE;
-            resetIdleUI();
-            flashHint('Aya load failed', 1200);
-            return;
+    try {
+      // Ensure the elevator is positioned/oriented for the Aya floor BEFORE spawning.
+      const elev = document.getElementById('industrial_elevator_1');
+      if (elev) {
+        elev.setAttribute('position', '0 0 -0.02');
+        elev.setAttribute('rotation', '0 0 0');
+      }
+
+      // Load Aya content into #levelRoot (use preloaded text when available).
+      if (__AYA_PRELOAD_TEXT) {
+        await loadFragmentFromText(__AYA_PRELOAD_TEXT);
+      } else {
+        await loadFragment('./rooms/aya.fragment.html');
+      }
+
+      // Place player inside the elevator at the same ride marker.
+      const rig = document.getElementById('rig');
+      const marker = document.getElementById('elevator1_rideMarker');
+      if (rig && marker && marker.object3D) {
+        const wp = new THREE.Vector3();
+        marker.object3D.getWorldPosition(wp);
+        rig.object3D.position.copy(wp);
+      }
+
+      // Keep doors closed for a beat, then open and restore control.
+      pauseMovement(true);
+      setTimeout(()=>{
+        // Toggle doors to open (only if currently closed).
+        try {
+          if (typeof isDoorOpen === 'function' && !isDoorOpen()) {
+            document.getElementById('industrial_elevator_1')?.emit('elevator1-toggle');
+          } else if (typeof isDoorOpen !== 'function') {
+            document.getElementById('industrial_elevator_1')?.emit('elevator1-toggle');
           }
+        } catch(e){}
+        pauseMovement(false);
+        state = STATE.IDLE;
+        resetIdleUI();
+        flashHint('Arrived', 1200);
+      }, 900);
 
-          // Move elevator to Aya expected spot (from aya.dev.html).
-          try{
-            elevator.setAttribute('position', '0 0 -0.02');
-            elevator.setAttribute('rotation', '0 0 0');
-          }catch(e){}
-
-          // Place rig inside elevator and facing OUT.
-          try{
-            const wpInside  = worldFromLocal(WP_INSIDE_LOCAL);
-            rig.object3D.position.copy(wpInside);
-            // face outside and level.
-            const faceOutYaw = getWorldYawOfElevatorFacingOut();
-            setCameraYawRad(faceOutYaw);
-            setCameraPitchRad(0);
-          }catch(e){}
-
-          // Brief beat, then open doors and restore control.
-          setTimeout(()=>{
-            // Open doors (toggle to open if currently closed)
-            if (!isDoorOpen()) toggleDoorsOpen();
-            pauseMovement(false);
-            state = STATE.IDLE;
-            resetIdleUI();
-            flashHint('Arrived', 1000);
-          }, 450);
-        }, 700);
-      })();
-
-    };
+    } catch (e) {
+      console.warn('[Transition] Failed to load Aya:', e);
+      pauseMovement(false);
+      state = STATE.IDLE;
+      resetIdleUI();
+    }
+  }, 700);
+};
   }
 
   function onFirstF(){
