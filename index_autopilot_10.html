@@ -6033,68 +6033,96 @@ AFRAME.registerComponent('pbr-carpet', {
   doorL.addEventListener('elevator1-open', onDoorsOpened);
   doorL.addEventListener('elevator1-close', onDoorsClosed);
 
-  // Core: animate movement in 2 legs + a turn (no snapping).
-  function runAutopilotPath() {
-    const { approachWorld, rideWorld, finalYaw } = getWaypointsWorld();
+  // Core: autopilot "walk" that respects the user's current position *and* current look direction.
+// Instead of lerping directly to the target (which can feel like a teleport/slide), we:
+//  - rotate toward the target at TURN_SPEED_DPS
+//  - move forward along the current yaw at WALK_SPEED_MPS
+// This produces a natural curved path that depends on where the user is and where they're looking.
+function runAutopilotPath() {
+  const { approachWorld, rideWorld, finalYaw } = getWaypointsWorld();
 
-    const startWorld = rig.object3D.position.clone();
-    startWorld.y = rideWorld.y;
+  // Walk-to helper: rotate toward target, then move forward.
+  function walkTo(targetWorld) {
+    return new Promise(resolve => {
+      let last = performance.now();
 
-    const leg1Dist = startWorld.distanceTo(approachWorld);
-    const leg2Dist = approachWorld.distanceTo(rideWorld);
+      function step(now) {
+        const dt = Math.min(0.05, Math.max(0.0, (now - last) / 1000)); // clamp dt for stability
+        last = now;
 
-    const leg1Ms = clamp((leg1Dist / WALK_SPEED_MPS) * 1000, MIN_SEG_MS, MAX_SEG_MS);
-    const leg2Ms = clamp((leg2Dist / WALK_SPEED_MPS) * 1000, MIN_SEG_MS, MAX_SEG_MS);
+        const pos = rig.object3D.position.clone();
+        const to = targetWorld.clone().sub(pos);
+        to.y = 0;
 
-    // Turn from whatever yaw the movement ends at -> finalYaw (facing outside).
-    // We'll compute it dynamically after leg2 so it always takes the right amount of time.
-    function moveSegment(from, to, durMs) {
-      return new Promise(resolve => {
-        const t0 = performance.now();
-        function step(now) {
-          const t = clamp((now - t0) / durMs, 0, 1);
-          const k = smoothstep01(t);
-
-          // Position interpolation
-          rig.object3D.position.lerpVectors(from, to, k);
-
-          // While moving, face direction of travel.
-          const dir = to.clone().sub(from);
-          const yaw = yawFromDir(dir);
-          setYawPitch(yaw, 0);
-
-          if (t < 1) requestAnimationFrame(step);
-          else resolve();
+        const dist = to.length();
+        if (dist < 0.05) { // arrived
+          // Don't snap; just ensure we're very close and leveled
+          rig.object3D.position.x = targetWorld.x;
+          rig.object3D.position.z = targetWorld.z;
+          setYawPitch(getYawDeg(), 0);
+          return resolve();
         }
-        requestAnimationFrame(step);
-      });
-    }
 
-    function turnToYaw(targetYawDeg) {
-      return new Promise(resolve => {
+        // Desired yaw toward the target (world-space).
+        const desiredYaw = yawFromDir(to);
+
+        // Rotate toward desired yaw based on current yaw (so initial look matters).
+        const yaw0 = getYawDeg();
+        const delta = deltaAngleDeg(yaw0, desiredYaw);
+        const maxTurn = TURN_SPEED_DPS * dt;
+        const yawNext = yaw0 + clamp(delta, -maxTurn, maxTurn);
+        setYawPitch(yawNext, 0);
+
+        // Move forward along the (updated) yaw.
+        const stepDist = Math.min(dist, WALK_SPEED_MPS * dt);
+        const yawRad = yawNext * DEG2RAD;
+
+        // In this project yaw=0 corresponds to looking toward -Z.
+        // Forward vector in XZ:
+        const fwdX = -Math.sin(yawRad);
+        const fwdZ = -Math.cos(yawRad);
+
+        rig.object3D.position.x += fwdX * stepDist;
+        rig.object3D.position.z += fwdZ * stepDist;
+
+        requestAnimationFrame(step);
+      }
+
+      requestAnimationFrame(step);
+    });
+  }
+
+  // Turn in place to a final yaw (facing outside), smoothly.
+  function turnToYaw(targetYawDeg) {
+    return new Promise(resolve => {
+      let last = performance.now();
+      function step(now) {
+        const dt = Math.min(0.05, Math.max(0.0, (now - last) / 1000));
+        last = now;
+
         const yaw0 = getYawDeg();
         const d = deltaAngleDeg(yaw0, targetYawDeg);
-        const durMs = clamp((Math.abs(d) / TURN_SPEED_DPS) * 1000, 420, 1400);
-        const t0 = performance.now();
-        function step(now) {
-          const t = clamp((now - t0) / durMs, 0, 1);
-          const k = smoothstep01(t);
-          const yaw = yaw0 + d * k;
-          setYawPitch(yaw, 0);
-          if (t < 1) requestAnimationFrame(step);
-          else resolve();
+        const maxTurn = TURN_SPEED_DPS * dt;
+        const yawNext = yaw0 + clamp(d, -maxTurn, maxTurn);
+        setYawPitch(yawNext, 0);
+
+        if (Math.abs(d) < 1.0) { // within 1 degree
+          setYawPitch(targetYawDeg, 0);
+          return resolve();
         }
         requestAnimationFrame(step);
-      });
-    }
-
-    // Leg 1: go to the door (outside)
-    // Leg 2: step into cabin
-    // Leg 3: turn around to face outside
-    return moveSegment(startWorld, approachWorld, leg1Ms)
-      .then(() => moveSegment(approachWorld, rideWorld, leg2Ms))
-      .then(() => turnToYaw(finalYaw));
+      }
+      requestAnimationFrame(step);
+    });
   }
+
+  // Leg 1: walk to door-front (outside)
+  // Leg 2: walk into cabin (ride frame)
+  // Leg 3: turn to face outside
+  return walkTo(approachWorld)
+    .then(() => walkTo(rideWorld))
+    .then(() => turnToYaw(finalYaw));
+}
 
   function startAutopilot() {
     if (state !== STATE.IDLE) return;
