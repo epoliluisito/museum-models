@@ -18,8 +18,68 @@
 <style>
     html, body { margin: 0; height: 100%; overflow: hidden; background: #020202; }
   </style>
+
+<style>
+  /* ===== Mercury Pool User Guide (overlay) ===== */
+  #userGuide {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%);
+    max-width: min(720px, calc(100vw - 32px));
+    padding: 14px 16px 12px;
+    border-radius: 10px;
+    background: rgba(0,0,0,0.56);
+    border: 1px solid rgba(140,200,255,0.30);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+    color: rgba(255,255,255,0.92);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    letter-spacing: 0.2px;
+    z-index: 99999;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 160ms ease, transform 160ms ease;
+  }
+  #userGuide.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+  #userGuide .ug-title {
+    font-size: 12px;
+    opacity: 0.75;
+    margin-bottom: 6px;
+  }
+  #userGuide .ug-body {
+    font-size: 14px;
+    line-height: 1.35;
+  }
+  #userGuide .ug-keys {
+    margin-top: 8px;
+    font-size: 12px;
+    opacity: 0.8;
+  }
+  #userGuide kbd {
+    display: inline-block;
+    min-width: 18px;
+    padding: 2px 7px;
+    margin: 0 3px;
+    border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.18);
+    background: rgba(255,255,255,0.08);
+    font-weight: 700;
+  }
+</style>
+
 </head>
 <body>
+
+  <!-- ===== Mercury Pool User Guide (DOM overlay) ===== -->
+  <div id="userGuide" aria-live="polite">
+    <div class="ug-title">MERCURY POOL — USER GUIDE</div>
+    <div class="ug-body" id="userGuideText"> </div>
+    <div class="ug-keys" id="userGuideKeys"> </div>
+  </div>
+
 <script>
 // Force deterministic draw ordering for layered liquid.
 AFRAME.registerComponent('render-order', {
@@ -2221,7 +2281,9 @@ AFRAME.registerComponent('rig-walk', {
   },
 
   tick: function (t, dt) {
-    const moving = !!this.keys['KeyW'] || !!this.keys['ArrowUp'] ||
+    
+    if (this.el && this.el.getAttribute && this.el.getAttribute('data-seat-autopilot') === '1') return;
+const moving = !!this.keys['KeyW'] || !!this.keys['ArrowUp'] ||
                    !!this.keys['KeyS'] || !!this.keys['ArrowDown'] ||
                    !!this.keys['KeyA'] || !!this.keys['ArrowLeft'] ||
                    !!this.keys['KeyD'] || !!this.keys['ArrowRight'];
@@ -2883,7 +2945,9 @@ AFRAME.registerComponent('mercury-surface', {
   },
 
   tick: function (t, dt) {
-    const nowS = (t || 0) * 0.001;
+    
+    if (this.el && this.el.getAttribute && this.el.getAttribute('data-seat-autopilot') === '1') return;
+const nowS = (t || 0) * 0.001;
     const dtS  = (dt || 0) * 0.001;
 
     // If geometry wasn't ready at init time, keep retrying (some A-Frame setups attach mesh later).
@@ -10384,11 +10448,252 @@ AFRAME.registerComponent('cylindrical-clip', {
 </a-entity>
 
 <!-- Player rig (identical rules) -->
-<a-entity id="rig" position="0 0 -1.15" rig-walk="speed: 2.6; radius: 0.28" rotation="0 0 0">
+<a-entity id="rig" position="36.33 0.03 41.92" rig-walk="speed: 2.6; radius: 0.28" rotation="0 0 0">
 <a-entity camera="fov: 60; near: 0.1; far: 250; zoom: 1.08" id="playerCam" look-controls="pointerLockEnabled: true" pitch-clamp="min: -80; max: 80" position="0 1.6 0" rotation="0 0 0">
 <a-entity cursor="rayOrigin: mouse"></a-entity>
 </a-entity>
 </a-entity>
 </a-scene>
+
+<script>
+/* ===== Mercury Pool Seats: proximity guide + autopilot seat + activate hook =====
+   - Step 1: within ~2m of any seat => show guide, press E to autopilot to nearest seat.
+   - Step 2: once seated view reached => show guide, press F to activate experience (emits event).
+*/
+(function () {
+  const SEAT_IDS = ['rock_seat_01','rock_seat_02','rock_seat_03','rock_seat_04'];
+  const POOL_CENTER = new THREE.Vector3(0, 0, 38.7); // world-ish in this scene
+  const NEAR_DIST = 2.0;
+  const TARGET_CAM_Y = 1.40; // seated eye height
+  const AUTOPILOT_SPEED = 1.85; // m/s
+  const ARRIVE_EPS = 0.06;
+
+  function isKey(e, code) { return (e.code === code) || ((e.key || '').toLowerCase() === code.replace('Key','').toLowerCase()); }
+  function activeInput() {
+    const a = document.activeElement;
+    return a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.isContentEditable);
+  }
+
+  function showGuide(text, keysHtml) {
+    const box = document.getElementById('userGuide');
+    const t = document.getElementById('userGuideText');
+    const k = document.getElementById('userGuideKeys');
+    if (!box || !t || !k) return;
+    t.innerHTML = text;
+    k.innerHTML = keysHtml || '';
+    box.classList.add('show');
+  }
+  function hideGuide() {
+    const box = document.getElementById('userGuide');
+    if (!box) return;
+    box.classList.remove('show');
+  }
+
+  AFRAME.registerComponent('mercury-seat-guide', {
+    init: function () {
+      this.rig = document.querySelector('#rig');
+      this.cam = document.querySelector('#playerCam') || document.querySelector('[camera]');
+      this.scene = this.el.sceneEl || document.querySelector('a-scene');
+
+      this.seats = [];
+      this._a = new THREE.Vector3();
+      this._b = new THREE.Vector3();
+      this._tmp = new THREE.Vector3();
+
+      this.state = 'idle'; // idle | near | autopilot | seated | activated
+      this.nearestSeat = null;
+
+      this._startPos = new THREE.Vector3();
+      this._targetPos = new THREE.Vector3();
+      this._targetYaw = 0;
+      this._camStartY = null;
+
+      this._onKeyDown = (e) => {
+        if (e.repeat || activeInput()) return;
+
+        if (isKey(e, 'KeyE')) {
+          // Step 1: start autopilot if near seats.
+          if (this.state === 'near' && this.nearestSeat) {
+            e.preventDefault();
+            this._beginAutopilot(this.nearestSeat);
+          }
+        } else if (isKey(e, 'KeyF')) {
+          // Step 2: activate experience if seated.
+          if (this.state === 'seated') {
+            e.preventDefault();
+            this.state = 'activated';
+            showGuide(
+              'Experience starting…<br><span style="opacity:.78">If you need to leave, press <kbd>ESC</kbd> to release pointer lock.</span>',
+              '<kbd>F</kbd> activated'
+            );
+            // Hook for your actual mercury pool experience logic:
+            const detail = { seatId: this.nearestSeat ? this.nearestSeat.id : null };
+            if (this.scene) this.scene.emit('mercury-pool-experience-start', detail, false);
+            document.dispatchEvent(new CustomEvent('mercury-pool-experience-start', { detail }));
+          }
+        }
+      };
+
+      window.addEventListener('keydown', this._onKeyDown, true);
+
+      // Build seat list once the scene is ready.
+      const buildSeats = () => {
+        this.seats = SEAT_IDS
+          .map(id => document.getElementById(id))
+          .filter(el => !!el && !!el.object3D);
+      };
+      if (this.scene && this.scene.hasLoaded) buildSeats();
+      else (this.scene || this.el).addEventListener('loaded', buildSeats, { once: true });
+    },
+
+    remove: function () {
+      window.removeEventListener('keydown', this._onKeyDown, true);
+    },
+
+    _beginAutopilot: function (seatEl) {
+      if (!this.rig || !this.cam) return;
+      if (!seatEl || !seatEl.object3D) return;
+
+      this.state = 'autopilot';
+
+      // Disable player walking input while autopilot is active.
+      this.rig.setAttribute('data-seat-autopilot', '1');
+      const rw = this.rig.components && this.rig.components['rig-walk'];
+      if (rw && typeof rw._clearKeys === 'function') rw._clearKeys();
+
+      // Cache original camera height (local Y).
+      if (this._camStartY == null) {
+        const camPos = this.cam.getAttribute('position');
+        this._camStartY = (camPos && typeof camPos.y === 'number') ? camPos.y : 1.6;
+      }
+
+      // Determine target rig position: seat world pos, but keep rig on floor (y=0).
+      seatEl.object3D.getWorldPosition(this._targetPos);
+      this._targetPos.y = 0;
+
+      // Start position from rig.
+      this._startPos.copy(this.rig.object3D.position);
+
+      // Face the pool center.
+      const yaw = Math.atan2((POOL_CENTER.x - this._targetPos.x), (POOL_CENTER.z - this._targetPos.z)); // radians
+      this._targetYaw = yaw;
+
+      showGuide(
+        'Sit down to try the mercury pool experience.<br>Autopilot will guide you to the nearest seat…',
+        'Press <kbd>E</kbd> to sit'
+      );
+    },
+
+    _finishSeated: function () {
+      if (!this.rig || !this.cam) return;
+      this.state = 'seated';
+
+      // Lock camera height to seated level.
+      const camPos = this.cam.getAttribute('position') || {x:0,y:1.6,z:0};
+      this.cam.setAttribute('position', { x: camPos.x, y: TARGET_CAM_Y, z: camPos.z });
+
+      // Re-enable walking input only when you later implement "stand up".
+      this.rig.setAttribute('data-seat-autopilot', '0');
+
+      showGuide(
+        'You are seated. When you’re ready, activate the mercury pool experience.',
+        'Press <kbd>F</kbd> to begin'
+      );
+    },
+
+    tick: function (t, dt) {
+      if (!this.cam) return;
+      if (!this.seats || !this.seats.length) return;
+
+      const dtS = Math.min(0.05, (dt || 16) / 1000);
+
+      // Get camera world pos.
+      this.cam.object3D.getWorldPosition(this._a);
+
+      // Find nearest seat distance.
+      let best = null;
+      let bestD = Infinity;
+      for (let i = 0; i < this.seats.length; i++) {
+        const s = this.seats[i];
+        if (!s || !s.object3D) continue;
+        s.object3D.getWorldPosition(this._b);
+        const d = this._a.distanceTo(this._b);
+        if (d < bestD) { bestD = d; best = s; }
+      }
+      this.nearestSeat = best;
+
+      // State machine.
+      if (this.state === 'idle') {
+        if (best && bestD <= NEAR_DIST) {
+          this.state = 'near';
+          showGuide(
+            'Sit down and try the mercury pool experience.<br><span style="opacity:.78">Autopilot will guide you to the nearest seat and set your view.</span>',
+            'Press <kbd>E</kbd> to sit'
+          );
+        }
+        return;
+      }
+
+      if (this.state === 'near') {
+        if (!best || bestD > NEAR_DIST) {
+          this.state = 'idle';
+          hideGuide();
+          return;
+        }
+        // Keep the guide visible and stable while hovering around seats.
+        return;
+      }
+
+      if (this.state === 'autopilot') {
+        if (!this.rig) return;
+
+        // Move rig towards target.
+        const pos = this.rig.object3D.position;
+        const to = this._tmp.copy(this._targetPos).sub(pos);
+        const dist = to.length();
+
+        // Smooth yaw towards targetYaw.
+        const rigRot = this.rig.object3D.rotation;
+        const curYaw = rigRot.y;
+        // shortest angle
+        let dy = this._targetYaw - curYaw;
+        dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+        rigRot.y = curYaw + dy * Math.min(1, dtS * 3.2);
+
+        // Ease camera height down while approaching (feels like "sitting").
+        const camPos = this.cam.getAttribute('position') || {x:0,y:1.6,z:0};
+        const yNow = camPos.y;
+        const yTarget = TARGET_CAM_Y;
+        const yNew = yNow + (yTarget - yNow) * Math.min(1, dtS * 2.4);
+        this.cam.setAttribute('position', { x: camPos.x, y: yNew, z: camPos.z });
+
+        if (dist <= ARRIVE_EPS) {
+          pos.copy(this._targetPos);
+          this._finishSeated();
+          return;
+        }
+
+        to.normalize();
+        const step = Math.min(dist, AUTOPILOT_SPEED * dtS);
+        pos.addScaledVector(to, step);
+        return;
+      }
+
+      // Seated / activated: keep guide unless you later decide to auto-hide.
+    }
+  });
+
+  // Attach component to scene on load.
+  const scene = document.querySelector('a-scene');
+  if (!scene) return;
+  const attach = () => {
+    if (scene.hasAttribute('mercury-seat-guide')) return;
+    scene.setAttribute('mercury-seat-guide', '');
+  };
+  if (scene.hasLoaded) attach();
+  else scene.addEventListener('loaded', attach, { once: true });
+})();
+</script>
+
 </body>
 </html>
