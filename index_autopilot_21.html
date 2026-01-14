@@ -16436,6 +16436,249 @@ if(!AFRAME.components['cylindrical-clip']) AFRAME.registerComponent('cylindrical
     }
   }
 });
+
+
+// ===== Aya room fragment loader + swap (added) =====
+(function(){
+  const AYA_URL = './rooms/aya.fragment.html';
+  const AYA_ELEV_POS = '0 0 -0.02';
+  const AYA_ELEV_ROT = '0 0 0';
+  let ayaText = null;
+  let ayaPreloadPromise = null;
+
+  function ensureLevelRoot(){
+    const scene = document.querySelector('a-scene');
+    if (!scene) return null;
+    let root = document.getElementById('levelRoot');
+    if (!root) {
+      root = document.createElement('a-entity');
+      root.setAttribute('id','levelRoot');
+      // Insert after a-assets if present, else at top of scene.
+      const assets = scene.querySelector('a-assets');
+      if (assets && assets.parentElement === scene) {
+        assets.insertAdjacentElement('afterend', root);
+      } else {
+        scene.insertBefore(root, scene.firstChild);
+      }
+    }
+    return root;
+  }
+
+  function adoptFearRoomIntoLevelRoot(){
+    const scene = document.querySelector('a-scene');
+    const root = ensureLevelRoot();
+    if (!scene || !root) return;
+
+    // Only do once.
+    if (root.__adopted) return;
+    root.__adopted = true;
+
+    const keepIds = new Set(['levelRoot','rig','industrial_elevator_1']);
+    const assets = scene.querySelector('a-assets');
+
+    // Move everything that is a direct child of scene (except keepers) into levelRoot.
+    Array.from(scene.children).forEach((el)=>{
+      if (el === assets) return;
+      if (keepIds.has(el.id)) return;
+      // Keep the initial ambient/directional lights? No: they belong to the level, so move them too.
+      root.appendChild(el);
+    });
+  }
+
+  function mergeAssetsFromFragment(fragmentDoc){
+    const sceneAssets = document.querySelector('a-scene a-assets');
+    const fragAssets = fragmentDoc.querySelector('a-assets');
+    if (!sceneAssets || !fragAssets) return;
+
+    Array.from(fragAssets.children).forEach((child)=>{
+      const id = child.getAttribute && child.getAttribute('id');
+      if (id && sceneAssets.querySelector('#'+CSS.escape(id))) return;
+      sceneAssets.appendChild(child.cloneNode(true));
+    });
+  }
+
+  function ensureAyaComponentsRegistered(){
+    if (window.__AYA_COMPONENT_STUBS_READY) return;
+    if (!window.AFRAME || !window.THREE) return;
+
+    const required = [
+    'ao-tune',
+    'beam-dust',
+    'cave-displace',
+    'cave-dome-naturalize',
+    'cave-floor-seal',
+    'collider-ring',
+    'cylindrical-clip',
+    'disc-clip',
+    'dome-sand-organic',
+    'dust-decal-alpha',
+    'floor-rock-scatter',
+    'floor-seam-sculpt',
+    'floor-seam-sculpt-anchored',
+    'force-double-side',
+    'futuristic-flame',
+    'glass-depthfix',
+    'ground-undulate',
+    'mercury-ibl-silver',
+    'mercury-sinuous-driver',
+    'mercury-surface',
+    'merge-align',
+    'organic-rim',
+    'organic-ring-edge',
+    'perforated-sphere-light',
+    'planar-reflector',
+    'pool-sheen-fresnel',
+    'portal-cut-wait',
+    'procedural-pebble-decal',
+    'render-order',
+    'rock-seat-shape',
+    'rock-surface',
+    'seam-rubble-skirt',
+    'sin-bob',
+    'spherical-segment-clip',
+    'thick-dome-shell',
+    'torch-flicker',
+    'torch-glass',
+    'torch-gobo',
+    'tunnel-rubble-scatter',
+    'tunnel-sand-organic',
+    'uv2-from-uv'
+    ];
+
+    required.forEach((name)=>{
+      if (AFRAME.components && AFRAME.components[name]) return;
+      try {
+        AFRAME.registerComponent(name, {
+          schema: {},
+          init: function(){},
+          update: function(){}
+        });
+      } catch (e) {
+        // ignore double-register races
+      }
+    });
+
+    // Minimal geometry for extruded-ring so Aya doesn't crash.
+    if (!(AFRAME.geometries && AFRAME.geometries['extruded-ring'])) {
+      try {
+        AFRAME.registerGeometry('extruded-ring', {
+          schema: {
+            radiusInner: {default: 0.9},
+            radiusOuter: {default: 1.0},
+            segments: {default: 64},
+            // keep extra params but ignore them
+            height: {default: 0.1}
+          },
+          init: function(data) {
+            this.geometry = new THREE.RingGeometry(data.radiusInner, data.radiusOuter, data.segments);
+          }
+        });
+      } catch(e){}
+    }
+
+    window.__AYA_COMPONENT_STUBS_READY = true;
+  }
+
+  async function preloadAyaFragment(){
+    if (ayaText) return ayaText;
+    if (!ayaPreloadPromise) {
+      ayaPreloadPromise = fetch(AYA_URL, {cache:'no-store'}).then(r=>{
+        if (!r.ok) throw new Error('Failed to fetch '+AYA_URL+': '+r.status);
+        return r.text();
+      }).then(t=>{ ayaText=t; return t; });
+    }
+    return ayaPreloadPromise;
+  }
+
+  function parseFragment(html){
+    const tpl = document.createElement('template');
+    tpl.innerHTML = html.trim();
+    // Wrap in a container for easy querying
+    const wrapper = document.createElement('div');
+    wrapper.appendChild(tpl.content.cloneNode(true));
+    return wrapper;
+  }
+
+  function getElevator(){
+    return document.getElementById('industrial_elevator_1');
+  }
+
+  function rigEl(){
+    return document.getElementById('rig');
+  }
+
+  function setRigToInsideFacingOut(){
+    const elevator = getElevator();
+    const rig = rigEl();
+    if (!elevator || !rig) return;
+
+    // Local inside point (matches your autopilot target)
+    const localInside = new THREE.Vector3(0, 0, -0.55);
+    const worldInside = elevator.object3D.localToWorld(localInside.clone());
+    rig.object3D.position.copy(worldInside);
+
+    // Face out = elevator local +Z
+    const q = new THREE.Quaternion();
+    const e = new THREE.Euler(0,0,0,'YXZ');
+    elevator.object3D.getWorldQuaternion(q);
+    e.setFromQuaternion(q,'YXZ');
+    const yaw = e.y;
+
+    const cam = rig.querySelector('[camera]') || document.querySelector('[camera]');
+    if (cam) {
+      cam.setAttribute('rotation', `0 ${THREE.MathUtils.radToDeg(yaw)} 0`);
+    } else {
+      rig.setAttribute('rotation', `0 ${THREE.MathUtils.radToDeg(yaw)} 0`);
+    }
+  }
+
+  function openDoors(){
+    const elevator = getElevator();
+    if (!elevator) return;
+    elevator.emit('elevator1-toggle');
+  }
+
+  window.preloadAyaFragment = preloadAyaFragment;
+
+  window.swapToAyaFromElevator = async function(){
+    adoptFearRoomIntoLevelRoot();
+    ensureAyaComponentsRegistered();
+
+    const html = await preloadAyaFragment();
+    const fragDoc = parseFragment(html);
+
+    // Merge assets first
+    mergeAssetsFromFragment(fragDoc);
+
+    const root = ensureLevelRoot();
+    if (!root) throw new Error('levelRoot missing');
+
+    // Clear current level
+    root.innerHTML = '';
+
+    // Append all fragment nodes except a-assets
+    Array.from(fragDoc.children).forEach((node)=>{
+      if (!node || !node.tagName) return;
+      if (node.tagName.toLowerCase() === 'a-assets') return;
+      root.appendChild(node.cloneNode(true));
+    });
+
+    // Move elevator to Aya transform
+    const elevator = getElevator();
+    if (elevator) {
+      elevator.setAttribute('position', AYA_ELEV_POS);
+      elevator.setAttribute('rotation', AYA_ELEV_ROT);
+    }
+
+    // Place rig inside elevator, facing out, leveled
+    setRigToInsideFacingOut();
+
+    // Small beat, then open doors
+    setTimeout(()=>{ openDoors(); }, 400);
+  };
+})();
+// ===== End Aya loader + swap =====
+
 })();
 
 </script>
