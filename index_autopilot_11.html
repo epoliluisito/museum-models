@@ -5966,8 +5966,24 @@ AFRAME.registerComponent('pbr-carpet', {
   function getWaypointsWorld() {
     const y = rig.object3D.position.y;
 
-    const approachLocal = new THREE.Vector3(0, 0, 1.20);  // ~1.2m outside
-    const rideLocal     = new THREE.Vector3(0, 0, -0.55); // ~55cm inside
+    // Determine which side of the elevator the user is on *at the moment of pressing F*.
+    // We use elevator-local Z: +Z is one side of the doors, -Z the other.
+    const userWorld = rig.object3D.position.clone();
+    const userLocal = userWorld.clone();
+    elevator.object3D.worldToLocal(userLocal);
+
+    // Outside is whichever side the user is currently on.
+    const signZ = (userLocal.z >= 0) ? 1 : -1;
+
+    // Preserve the user's lateral alignment a bit (so it feels consistent with where they were standing),
+    // but clamp to reasonable cabin bounds.
+    const xLocal = clamp(userLocal.x, -0.55, 0.55);
+
+    // Waypoints in elevator local space:
+    // - approach: just outside the doors on the user's side
+    // - ride: inside the cabin (same line), so they step forward naturally
+    const approachLocal = new THREE.Vector3(xLocal, 0, 1.20 * signZ);   // ~1.2m outside
+    const rideLocal     = new THREE.Vector3(xLocal, 0, -0.55 * signZ);  // ~55cm inside
 
     const approachWorld = approachLocal.clone();
     const rideWorld     = rideLocal.clone();
@@ -5977,12 +5993,12 @@ AFRAME.registerComponent('pbr-carpet', {
     approachWorld.y = y;
     rideWorld.y = y;
 
-    // Facing outside = look from rideWorld toward approachWorld.
+    // Final pose: facing outside (toward the approach point on the door side).
     const outDir = approachWorld.clone().sub(rideWorld);
     const finalYaw = yawFromDir(outDir);
 
     return { approachWorld, rideWorld, finalYaw };
-  }
+  }  }
 
   // Fade out ALL A-Frame sound components (and pause them) for realism.
   function fadeOutSceneAudio(ms) {
