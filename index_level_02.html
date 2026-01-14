@@ -5815,14 +5815,7 @@ AFRAME.registerComponent('pbr-carpet', {
     setupOnce._done = true;
 
     const elevator = document.querySelector('#industrial_elevator_1');
-  // Derive door close duration from the actual A-Frame animation on the doors.
-  // This ensures the elevator ride video starts only after the doors have finished closing.
-  const doorL = document.querySelector('#elevator1_door_L');
-  const doorR = document.querySelector('#elevator1_door_R');
-  const animClose = (doorL && doorL.getAttribute('animation__close_pos')) || (doorR && doorR.getAttribute('animation__close_pos')) || '';
-  const mDur = /dur:\s*(\d+)/.exec(String(animClose));
-  if (mDur) closeDelayMs = parseInt(mDur[1], 10) + CLOSE_BUFFER_MS;
-
+  
     const cam = document.querySelector('#playerCam');
     const callPanel = document.querySelector('#elevator1_call_panel') || document.querySelector('#elevator1_call_button');
     const doorL = document.querySelector('#elevator1_door_L');
@@ -5897,6 +5890,16 @@ AFRAME.registerComponent('pbr-carpet', {
   const DEFAULT_CLOSE_DELAY_MS = 600; // fallback if door anim dur can't be read
   const CLOSE_BUFFER_MS = 80;
   let closeDelayMs = DEFAULT_CLOSE_DELAY_MS;
+
+  // Derive door close duration from the actual A-Frame animation on the doors.
+  // This ensures the elevator ride video starts only after the doors have finished closing.
+  (function computeCloseDelay(){
+    const dL = document.querySelector('#elevator1_door_L');
+    const dR = document.querySelector('#elevator1_door_R');
+    const animClose = (dL && dL.getAttribute('animation__close_pos')) || (dR && dR.getAttribute('animation__close_pos')) || '';
+    const mDur = /dur:\s*(\d+)/.exec(String(animClose));
+    if (mDur) closeDelayMs = parseInt(mDur[1], 10) + CLOSE_BUFFER_MS;
+  })();
 // Waypoints in ELEVATOR LOCAL space (assumes doors on +Z, cab extends into -Z)
   const WP_OUTSIDE_LOCAL = new THREE.Vector3(0, 0, 0.85);   // ~85cm outside doors
   const WP_INSIDE_LOCAL  = new THREE.Vector3(0, 0, -0.55);  // ~55cm inside cab
