@@ -5864,11 +5864,14 @@ AFRAME.registerComponent('pbr-carpet', {
 <!-- ===== INSERTED: Elevator Autopilot + Confirm + Video (KeyF) ===== -->
 <script>
 (function () {
-  const KEY_PRIMARY = 'KeyF';               // use this key to "enter / confirm elevator travel"
-  const AUTOPILOT_DUR_MS = 2000;            // movement duration (ms)
-  const NEAR_ELEVATOR_DIST = 6.0;           // allow F when within this distance from the elevator
-  const AUDIO_FADE_MS = 2200;               // fade out room audio after activation
-  const AFTER_CONFIRM_MS = 520;             // let doors finish closing before video fade
+  const KEY_PRIMARY = 'KeyF';                 // Press F to activate / confirm elevator travel
+  const NEAR_ELEVATOR_DIST = 20.0;            // Allow activation within this distance (meters)
+  const WALK_SPEED_MPS = 1.6;                 // Autopilot walk speed (m/s)
+  const TURN_SPEED_DPS = 240;                 // Turn speed (deg/s)
+  const MIN_SEG_MS = 550;                     // Minimum time for a travel segment (ms)
+  const MAX_SEG_MS = 4500;                    // Maximum time for a travel segment (ms)
+  const AUDIO_FADE_MS = 2500;                 // Fade out room audio after activation
+  const POST_CLOSE_HOLD_MS = 120;             // Tiny beat after doors toggle before video overlay (ms)
 
   const elevator = document.querySelector('#industrial_elevator_1');
   const rig = document.querySelector('#rig');
@@ -5882,30 +5885,27 @@ AFRAME.registerComponent('pbr-carpet', {
   const overlay = document.getElementById('elevatorVideoOverlay');
   const rideVideo = document.getElementById('elevatorRideVideo');
 
-  // Room audio sources we want to silence for realism.
-  const fearRoomMusic = document.getElementById('fearRoomMusic');
-  const introWaiting = document.getElementById('introWaiting');
-  const introWalking = document.getElementById('introWalking');
+  if (!elevator || !rig || !cam || !doorL || !doorR || !guide || !guideChoice || !overlay || !rideVideo) return;
 
-  if (!elevator || !rig || !cam || !doorL || !doorR || !guide || !guideChoice || !overlay || !rideVideo) {
-    // Hard fail silently — better than throwing and breaking the whole scene.
-    return;
-  }
-
-  // --- tiny helpers ---
+  const THREE = AFRAME.THREE;
   const v3a = new THREE.Vector3();
   const v3b = new THREE.Vector3();
+  const v3c = new THREE.Vector3();
   const DEG2RAD = Math.PI / 180;
+  const RAD2DEG = 180 / Math.PI;
+
+  function clamp(x, a, b) { return Math.max(a, Math.min(b, x)); }
+
+  function smoothstep01(t) { return t * t * (3 - 2 * t); }
 
   function setGuideText(html) {
-    // Keep guide visible; only update the message line.
     guideChoice.innerHTML = html;
   }
 
   function isDoorOpen() {
     const c = elevator.components && elevator.components['elevator-toggle'];
     if (c && typeof c.isOpen === 'boolean') return c.isOpen;
-    // Fallback: infer from door position (open doors slide outward to ~±1.95).
+    // Fallback: infer from door position.
     const p = doorL.getAttribute('position');
     return p && Math.abs(p.x) > 1.2;
   }
@@ -5916,38 +5916,6 @@ AFRAME.registerComponent('pbr-carpet', {
     return v3a.distanceTo(v3b) <= NEAR_ELEVATOR_DIST;
   }
 
-  function safePlay(media) {
-    if (!media) return Promise.resolve();
-    try {
-      const p = media.play();
-      if (p && p.catch) return p.catch(() => {});
-      return Promise.resolve();
-    } catch (e) {
-      return Promise.resolve();
-    }
-  }
-
-  function safePause(media) {
-    if (!media) return;
-    try { media.pause(); } catch (e) {}
-  }
-
-  function fadeOutAndPause(media, ms) {
-    if (!media) return;
-    const startV = (typeof media.volume === 'number') ? media.volume : 1;
-    const t0 = performance.now();
-    function step(t) {
-      const k = Math.min(1, (t - t0) / Math.max(1, ms));
-      if (typeof media.volume === 'number') media.volume = startV * (1 - k);
-      if (k < 1) requestAnimationFrame(step);
-      else {
-        safePause(media);
-        if (typeof media.volume === 'number') media.volume = startV; // restore default for later scenes
-      }
-    }
-    requestAnimationFrame(step);
-  }
-
   function pauseMovement(on) {
     const c = rig.components && rig.components['rig-walk'];
     if (!c) return;
@@ -5955,32 +5923,98 @@ AFRAME.registerComponent('pbr-carpet', {
     if (!on && c.play) c.play();
   }
 
-  function setCameraYawPitch(yawDeg, pitchDeg) {
-    const lc = cam.components && cam.components['look-controls'];
+  function getLookControls() {
+    return cam.components && cam.components['look-controls'];
+  }
+
+  function getYawDeg() {
+    const lc = getLookControls();
+    if (!lc || !lc.yawObject) return 0;
+    return lc.yawObject.rotation.y * RAD2DEG;
+  }
+
+  function setYawPitch(yawDeg, pitchDeg) {
+    const lc = getLookControls();
     if (!lc) return;
-    // Yaw is on yawObject, pitch is on pitchObject in A-Frame look-controls.
     if (lc.yawObject) lc.yawObject.rotation.y = yawDeg * DEG2RAD;
     if (lc.pitchObject) lc.pitchObject.rotation.x = pitchDeg * DEG2RAD;
   }
 
-  // Our target: inside the cab, facing outward (toward the hallway).
-  // Elevator is at rotation 0, and its doors are on +Z, cab extends into -Z.
-  function getTargetWorldPose() {
-    // Local target within elevator group.
-    const targetLocal = new THREE.Vector3(0, 0, -0.55);  // ~55cm inside
-    const targetWorld = targetLocal.clone();
-    elevator.object3D.localToWorld(targetWorld);
-    return {
-      pos: targetWorld,
-      yawDeg: 0,   // facing +Z (out of elevator)
-      pitchDeg: 0
-    };
+  // Convert a world-space direction vector (where we want the camera to look)
+  // into A-Frame look-controls yaw degrees. (Yaw=0 looks toward -Z.)
+  function yawFromDir(dirWorld) {
+    const d = dirWorld.clone();
+    d.y = 0;
+    if (d.lengthSq() < 1e-6) return getYawDeg();
+    d.normalize();
+    const yawRad = Math.atan2(d.x, d.z) + Math.PI;
+    let yawDeg = yawRad * RAD2DEG;
+    // Normalize to [-180, 180]
+    yawDeg = ((yawDeg + 540) % 360) - 180;
+    return yawDeg;
+  }
+
+  // Smallest signed angle delta (deg)
+  function deltaAngleDeg(a, b) {
+    let d = ((b - a + 540) % 360) - 180;
+    return d;
+  }
+
+  // Waypoints (in elevator local space):
+  // - approach: in front of the open doors (outside)
+  // - ride: inside the cabin (final pose location)
+  function getWaypointsWorld() {
+    const y = rig.object3D.position.y;
+
+    const approachLocal = new THREE.Vector3(0, 0, 1.20);  // ~1.2m outside
+    const rideLocal     = new THREE.Vector3(0, 0, -0.55); // ~55cm inside
+
+    const approachWorld = approachLocal.clone();
+    const rideWorld     = rideLocal.clone();
+    elevator.object3D.localToWorld(approachWorld);
+    elevator.object3D.localToWorld(rideWorld);
+
+    approachWorld.y = y;
+    rideWorld.y = y;
+
+    // Facing outside = look from rideWorld toward approachWorld.
+    const outDir = approachWorld.clone().sub(rideWorld);
+    const finalYaw = yawFromDir(outDir);
+
+    return { approachWorld, rideWorld, finalYaw };
+  }
+
+  // Fade out ALL A-Frame sound components (and pause them) for realism.
+  function fadeOutSceneAudio(ms) {
+    const sounds = Array.from(document.querySelectorAll('[sound]'))
+      .map(el => el.components && el.components.sound)
+      .filter(Boolean);
+
+    const start = performance.now();
+    const startVols = sounds.map(s => (typeof s.volume === 'number' ? s.volume : 1));
+
+    function tick(now) {
+      const t = clamp((now - start) / ms, 0, 1);
+      const k = smoothstep01(t);
+      sounds.forEach((s, i) => { s.volume = startVols[i] * (1 - k); });
+      if (t < 1) requestAnimationFrame(tick);
+      else sounds.forEach(s => { try { s.pauseSound(); } catch (e) {} });
+    }
+    requestAnimationFrame(tick);
+  }
+
+  function safePlay(media) {
+    if (!media) return Promise.resolve();
+    try {
+      const p = media.play();
+      if (p && typeof p.then === 'function') return p;
+    } catch (e) {}
+    return Promise.resolve();
   }
 
   // --- state machine ---
   const STATE = { IDLE: 0, AUTOPILOT: 1, READY_CONFIRM: 2, VIDEO: 3 };
   let state = STATE.IDLE;
-  let autopilotRAF = 0;
 
   function resetToIdleUI() {
     state = STATE.IDLE;
@@ -5988,9 +6022,8 @@ AFRAME.registerComponent('pbr-carpet', {
   }
 
   function onDoorsOpened() {
-    // Only messaging changes here. (Player can still walk in manually.)
     if (state === STATE.VIDEO) return;
-    setGuideText('Doors open. Press <span class="keycap keycap-ask">F</span> to enter (autopilot).');
+    setGuideText('Doors open. Press <span class="keycap keycap-ask">F</span> to activate the elevator.');
   }
 
   function onDoorsClosed() {
@@ -6000,65 +6033,99 @@ AFRAME.registerComponent('pbr-carpet', {
   doorL.addEventListener('elevator1-open', onDoorsOpened);
   doorL.addEventListener('elevator1-close', onDoorsClosed);
 
+  // Core: animate movement in 2 legs + a turn (no snapping).
+  function runAutopilotPath() {
+    const { approachWorld, rideWorld, finalYaw } = getWaypointsWorld();
+
+    const startWorld = rig.object3D.position.clone();
+    startWorld.y = rideWorld.y;
+
+    const leg1Dist = startWorld.distanceTo(approachWorld);
+    const leg2Dist = approachWorld.distanceTo(rideWorld);
+
+    const leg1Ms = clamp((leg1Dist / WALK_SPEED_MPS) * 1000, MIN_SEG_MS, MAX_SEG_MS);
+    const leg2Ms = clamp((leg2Dist / WALK_SPEED_MPS) * 1000, MIN_SEG_MS, MAX_SEG_MS);
+
+    // Turn from whatever yaw the movement ends at -> finalYaw (facing outside).
+    // We'll compute it dynamically after leg2 so it always takes the right amount of time.
+    function moveSegment(from, to, durMs) {
+      return new Promise(resolve => {
+        const t0 = performance.now();
+        function step(now) {
+          const t = clamp((now - t0) / durMs, 0, 1);
+          const k = smoothstep01(t);
+
+          // Position interpolation
+          rig.object3D.position.lerpVectors(from, to, k);
+
+          // While moving, face direction of travel.
+          const dir = to.clone().sub(from);
+          const yaw = yawFromDir(dir);
+          setYawPitch(yaw, 0);
+
+          if (t < 1) requestAnimationFrame(step);
+          else resolve();
+        }
+        requestAnimationFrame(step);
+      });
+    }
+
+    function turnToYaw(targetYawDeg) {
+      return new Promise(resolve => {
+        const yaw0 = getYawDeg();
+        const d = deltaAngleDeg(yaw0, targetYawDeg);
+        const durMs = clamp((Math.abs(d) / TURN_SPEED_DPS) * 1000, 420, 1400);
+        const t0 = performance.now();
+        function step(now) {
+          const t = clamp((now - t0) / durMs, 0, 1);
+          const k = smoothstep01(t);
+          const yaw = yaw0 + d * k;
+          setYawPitch(yaw, 0);
+          if (t < 1) requestAnimationFrame(step);
+          else resolve();
+        }
+        requestAnimationFrame(step);
+      });
+    }
+
+    // Leg 1: go to the door (outside)
+    // Leg 2: step into cabin
+    // Leg 3: turn around to face outside
+    return moveSegment(startWorld, approachWorld, leg1Ms)
+      .then(() => moveSegment(approachWorld, rideWorld, leg2Ms))
+      .then(() => turnToYaw(finalYaw));
+  }
+
   function startAutopilot() {
     if (state !== STATE.IDLE) return;
 
-    // Must be close enough AND doors must be open (game-feel).
-    if (!nearElevator()) return;
+    // Only gate: doors must be open (your desired UX).
     if (!isDoorOpen()) {
-      setGuideText('Open the elevator doors first (<span class="keycap">E</span>), then press <span class="keycap keycap-ask">F</span>.');
+      setGuideText('Open the elevator doors first (<span class="keycap keycap-ask">E</span>), then press <span class="keycap keycap-ask">F</span>.');
+      return;
+    }
+
+    // Optional sanity gate so the player doesn't trigger from the other side of the level.
+    if (!nearElevator()) {
+      setGuideText('Get closer to the elevator, then press <span class="keycap keycap-ask">F</span>.');
       return;
     }
 
     state = STATE.AUTOPILOT;
     setGuideText('Autopilot engaged…');
 
-    // Fade out room audio shortly after activation (for realism).
-    setTimeout(() => {
-      fadeOutAndPause(fearRoomMusic, AUDIO_FADE_MS);
-      // Also silence any intro media just in case.
-      fadeOutAndPause(introWaiting, 600);
-      fadeOutAndPause(introWalking, 600);
-    }, 700);
-
-    // Lock movement during autopilot.
+    // Disable player locomotion; we will drive the rig directly.
     pauseMovement(true);
 
-    const fromPos = rig.object3D.position.clone();
-    const target = getTargetWorldPose();
+    // Fade out all scene audio (so the ride feels sealed off).
+    fadeOutSceneAudio(AUDIO_FADE_MS);
 
-    const t0 = performance.now();
-
-    // Smoothstep easing.
-    function ease(t) { return t * t * (3 - 2 * t); }
-
-    // While moving, also gently pull the view to the target yaw.
-    // (We don't try to fully tween yaw; we just keep it stable and finish aligned.)
-    function step(now) {
-      const t = Math.min(1, (now - t0) / AUTOPILOT_DUR_MS);
-      const k = ease(t);
-
-      rig.object3D.position.lerpVectors(fromPos, target.pos, k);
-
-      if (t >= 0.7) {
-        // Start aligning view near the end so it feels intentional.
-        setCameraYawPitch(target.yawDeg, target.pitchDeg);
-      }
-
-      if (t < 1) {
-        autopilotRAF = requestAnimationFrame(step);
-      } else {
-        // Snap final pose cleanly.
-        rig.object3D.position.copy(target.pos);
-        setCameraYawPitch(target.yawDeg, target.pitchDeg);
-
-        state = STATE.READY_CONFIRM;
-        setGuideText('Press <span class="keycap keycap-ask">F</span> again to confirm travel.');
-      }
-    }
-
-    cancelAnimationFrame(autopilotRAF);
-    autopilotRAF = requestAnimationFrame(step);
+    // Run the 2-leg walk + turn.
+    runAutopilotPath().then(() => {
+      // Arrived in canonical "ride frame": inside cab, facing outside, view leveled.
+      state = STATE.READY_CONFIRM;
+      setGuideText('Press <span class="keycap keycap-ask">F</span> again to confirm descent.');
+    });
   }
 
   function confirmTravel() {
@@ -6066,73 +6133,65 @@ AFRAME.registerComponent('pbr-carpet', {
 
     state = STATE.VIDEO;
 
-    // Close doors (uses existing elevator-toggle logic).
-    // If doors are already closing/closed, this is a harmless toggle check.
+    // Close doors right away (existing elevator-toggle behavior).
     if (isDoorOpen()) elevator.emit('elevator1-toggle');
 
-    // Stop user guide entirely for maximum realism (and prevent it from reappearing).
+    // Remove and hide USER GUIDE for maximum realism.
     rig.removeAttribute('elevator-user-guide');
     guide.classList.remove('show');
     guide.setAttribute('aria-hidden', 'true');
 
-    // After doors finish, fade into ride video.
-    setTimeout(() => {
-      overlay.classList.add('show');
-      overlay.setAttribute('aria-hidden', 'false');
+    // Fade to overlay immediately (keeps play() inside the keypress gesture).
+    overlay.classList.add('show');
+    overlay.setAttribute('aria-hidden', 'false');
 
-      // Try to play with audio. If the browser blocks it, fallback to muted play.
-      rideVideo.currentTime = 0;
-      rideVideo.muted = false;
-      safePlay(rideVideo).catch(() => {
-        rideVideo.muted = true;
-        safePlay(rideVideo);
-      });
+    // Start video immediately in the same user gesture.
+    rideVideo.currentTime = 0;
+    rideVideo.muted = false;
 
-      // When video ends, fade out and restore controls.
-      rideVideo.onended = () => {
-        overlay.classList.remove('show');
-        overlay.setAttribute('aria-hidden', 'true');
+    safePlay(rideVideo).catch(() => {
+      rideVideo.muted = true;
+      return safePlay(rideVideo);
+    });
 
-        // Re-enable walking after the cut.
-        pauseMovement(false);
+    // When video ends, restore controls so you can test again.
+    rideVideo.onended = () => {
+      overlay.classList.remove('show');
+      overlay.setAttribute('aria-hidden', 'true');
 
-        // Restore the proximity user guide (so you can test again without reloading).
-        rig.setAttribute('elevator-user-guide', 'target: #industrial_elevator_1; showDistance: 5');
+      pauseMovement(false);
 
-        resetToIdleUI();
-      };
-    }, AFTER_CONFIRM_MS);
+      // Restore proximity guide so you can iterate without reloading.
+      rig.setAttribute('elevator-user-guide', 'target: #industrial_elevator_1; showDistance: 5');
+
+      resetToIdleUI();
+    };
   }
 
   function onKeyDown(e) {
-    // Robust: ignore if typing in an input.
     const active = document.activeElement;
     if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
 
     const code = e.code || '';
     const key = (e.key || '').toLowerCase();
-
     const isF = (code === KEY_PRIMARY) || (key === 'f');
     if (!isF || e.repeat) return;
 
-    // Capture it so it works even under pointer lock / other handlers.
     if (e.preventDefault) e.preventDefault();
 
-    // First press: autopilot into cab (only when doors are open and near elevator).
     if (state === STATE.IDLE) return startAutopilot();
-
-    // Second press: confirm + close + video.
     if (state === STATE.READY_CONFIRM) return confirmTravel();
   }
 
-  // Capture phase so nothing else can swallow it.
+  // Capture-phase so other listeners don't swallow the key.
   window.addEventListener('keydown', onKeyDown, true);
 
-  // Start with default UI line.
+  // Initialize UI line.
   resetToIdleUI();
 })();
 </script>
 <!-- ===== END INSERTED: Elevator Autopilot + Confirm + Video (KeyF) ===== -->
+
 <script id="eraoraIntroScript">
 (function () {
   const BOOT = document.getElementById('bootScreen');
