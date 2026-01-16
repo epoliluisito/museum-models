@@ -11372,6 +11372,168 @@ AFRAME.registerComponent('cylindrical-clip', {
     }
   }
 });
+
+
+// Seam cover: tiny sand clumps (instanced) to break up a floor seam edge.
+// IMPORTANT: This is purely visual (no collider class) and intentionally lightweight (single InstancedMesh).
+AFRAME.registerComponent('seam-grain-fringe', {
+  schema: {
+    // Copy the material maps from this element (usually #aya_dome_sand_floor)
+    source: { type: 'selector' },
+
+    // Elliptical band (in this entity's local XZ plane)
+    radiusX: { type: 'number', default: 1.55 },
+    radiusZ: { type: 'number', default: 2.90 },
+    inward:  { type: 'number', default: 0.06 },
+    outward: { type: 'number', default: 0.18 },
+
+    // Distribution
+    count: { type: 'int', default: 900 },
+    seed:  { type: 'int', default: 931 },
+    y:     { type: 'number', default: 0.014 },
+    yJitter: { type: 'number', default: 0.010 },
+
+    // Size (meters)
+    scaleMin: { type: 'number', default: 0.008 },
+    scaleMax: { type: 'number', default: 0.022 },
+    heroEvery: { type: 'int', default: 65 },
+    heroScaleMin: { type: 'number', default: 0.026 },
+    heroScaleMax: { type: 'number', default: 0.038 }
+  },
+
+  init: function () {
+    this._built = false;
+    this._build = this._build.bind(this);
+
+    // Build once the scene is ready (materials exist).
+    if (this.el.sceneEl && this.el.sceneEl.hasLoaded) {
+      setTimeout(this._build, 0);
+    } else {
+      this.el.sceneEl.addEventListener('loaded', () => setTimeout(this._build, 0));
+    }
+  },
+
+  remove: function () {
+    const mesh = this.el.getObject3D('mesh');
+    if (mesh) {
+      this.el.removeObject3D('mesh');
+      mesh.geometry && mesh.geometry.dispose && mesh.geometry.dispose();
+      mesh.material && mesh.material.dispose && mesh.material.dispose();
+    }
+  },
+
+  _build: function () {
+    if (this._built) return;
+    this._built = true;
+
+    const THREE = AFRAME.THREE;
+    const d = this.data;
+
+    // Deterministic RNG
+    let s = (d.seed | 0) >>> 0;
+    const rnd = () => {
+      // xorshift32
+      s ^= (s << 13) >>> 0;
+      s ^= (s >>> 17) >>> 0;
+      s ^= (s << 5) >>> 0;
+      return (s >>> 0) / 4294967296;
+    };
+
+    // Borrow floor maps if available (keeps sand hue consistent).
+    let srcMat = null;
+    const srcEl = d.source || document.querySelector('#aya_dome_sand_floor');
+    if (srcEl) {
+      const srcMesh = srcEl.getObject3D('mesh');
+      if (srcMesh && srcMesh.material) {
+        srcMat = Array.isArray(srcMesh.material) ? srcMesh.material[0] : srcMesh.material;
+      }
+    }
+
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      metalness: srcMat && srcMat.metalness != null ? srcMat.metalness : 0.0,
+      roughness: srcMat && srcMat.roughness != null ? srcMat.roughness : 1.0
+    });
+
+    // Copy maps when possible; geometry has UVs.
+    if (srcMat) {
+      if (srcMat.map) mat.map = srcMat.map;
+      if (srcMat.normalMap) mat.normalMap = srcMat.normalMap;
+      if (srcMat.roughnessMap) mat.roughnessMap = srcMat.roughnessMap;
+      // aoMap requires uv2; our spheres don't have uv2, so we skip it intentionally.
+      if (srcMat.envMapIntensity != null) mat.envMapIntensity = srcMat.envMapIntensity;
+      if (srcMat.normalScale) mat.normalScale = srcMat.normalScale.clone();
+    }
+
+    mat.side = THREE.FrontSide;
+    mat.polygonOffset = true;
+    mat.polygonOffsetFactor = -1;
+    mat.polygonOffsetUnits = -1;
+    mat.needsUpdate = true;
+
+    // Small sphere clumps read like micro-grains at scale, but keep UVs for texture continuity.
+    const geo = new THREE.SphereGeometry(1, 6, 4);
+    const inst = new THREE.InstancedMesh(geo, mat, Math.max(1, d.count));
+    inst.frustumCulled = true;
+    inst.castShadow = false;
+    inst.receiveShadow = true;
+
+    const m = new THREE.Matrix4();
+    const pos = new THREE.Vector3();
+    const quat = new THREE.Quaternion();
+    const sca = new THREE.Vector3();
+
+    const rx = Math.max(0.05, d.radiusX);
+    const rz = Math.max(0.05, d.radiusZ);
+
+    for (let i = 0; i < d.count; i++) {
+      const a = rnd() * Math.PI * 2;
+      const ca = Math.cos(a);
+      const sa = Math.sin(a);
+
+      // Base ellipse
+      let x = ca * rx;
+      let z = sa * rz;
+
+      // Approx outward normal for ellipse boundary
+      let nx = ca / Math.max(1e-6, rx);
+      let nz = sa / Math.max(1e-6, rz);
+      const nlen = 1.0 / Math.max(1e-6, Math.sqrt(nx * nx + nz * nz));
+      nx *= nlen; nz *= nlen;
+
+      // Radial offset: a little inward, mostly outward
+      const rad = (rnd() * (d.outward + d.inward)) - d.inward;
+      x += nx * rad;
+      z += nz * rad;
+
+      // Tangential jitter (breaks up the “ring” look)
+      const tx = -nz;
+      const tz = nx;
+      const tJ = (rnd() - 0.5) * 0.10;
+      x += tx * tJ;
+      z += tz * tJ;
+
+      // Height and scale
+      const y = d.y + (rnd() - 0.5) * d.yJitter;
+      const t = rnd();
+      let r = d.scaleMin + (d.scaleMax - d.scaleMin) * (t * t);
+      if (d.heroEvery > 0 && (i % d.heroEvery) === 0) {
+        const ht = rnd();
+        r = d.heroScaleMin + (d.heroScaleMax - d.heroScaleMin) * ht;
+      }
+
+      pos.set(x, y, z);
+      sca.set(r, r * (0.72 + rnd() * 0.56), r);
+      quat.setFromEuler(new THREE.Euler(rnd() * Math.PI, rnd() * Math.PI, rnd() * Math.PI));
+
+      m.compose(pos, quat, sca);
+      inst.setMatrixAt(i, m);
+    }
+
+    inst.instanceMatrix.needsUpdate = true;
+    this.el.setObject3D('mesh', inst);
+  }
+});
 })();
 </script>
 
@@ -11733,6 +11895,20 @@ AFRAME.registerComponent('cylindrical-clip', {
               organic-rim="amp: 0.03; freq: 9.0; seed: 101; zAmp: 0.015"
               material="shader: standard; color: #ffffff; src: #moonDiffuse; normalMap: #moonNormal; roughnessMap: #moonRough; aoMap: #moonAO; metalness: 0; roughness: 1; repeat: 10 7; normalScale: 0.9 0.9; side: double; aoMapIntensity: 0.25; emissive: #0f0f0f; emissiveIntensity: 0.08"
               shadow="cast:false; receive:true" uv2-from-uv></a-entity>
+
+    <!-- Seam cover: a low sand mound that overlaps both floors (tunnel + dome) and hides the join.
+         Volumetric (not a plane), with micro-grain fringe to kill the “too clean” edge.
+         Purely visual: does not alter collisions or portal logic. -->
+    <a-entity id="sand_seam_mound"
+              position="0 -1.18 0"
+              geometry="primitive: sphere; radius: 1; segmentsWidth: 44; segmentsHeight: 24"
+              scale="1.55 0.20 2.95"
+              cave-displace="amp: 0.055; maxDown: 0.030; freq: 2.10; macroFreq: 0.33; macroAmp: 0.22; seed: 2007; oct: 4; lac: 2.06; gain: 0.54"
+              material="shader: standard; color: #ffffff; src: #groundDiffuse; normalMap: #groundNormal; roughnessMap: #groundRough; metalness: 0; roughness: 1; repeat: 7 5; normalScale: 1 1; side: front; polygonOffset: true; polygonOffsetFactor: -1; polygonOffsetUnits: -1"
+              shadow="cast:false; receive:true" uv2-from-uv>
+      <a-entity id="sand_seam_grains"
+                seam-grain-fringe="source: #aya_dome_sand_floor; count: 950; radiusX: 1.50; radiusZ: 2.85; inward: 0.08; outward: 0.22; y: 0.012; yJitter: 0.010; seed: 777; scaleMin: 0.007; scaleMax: 0.020; heroEvery: 58; heroScaleMin: 0.024; heroScaleMax: 0.036"></a-entity>
+    </a-entity>
 </a-entity>
 
 <!-- Portal merge colliders (WORLD-aligned frame around the opening).
