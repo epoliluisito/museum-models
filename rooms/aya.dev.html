@@ -6589,6 +6589,187 @@ AFRAME.registerGeometry('extruded-ring', {
 });
 
 
+
+// Builds a solid *side-wall* volume from a displaced ring surface.
+// Fixes the classic issue where a flat extruded ring intersects a sculpted top surface ("piercing").
+// Usage: <a-entity solidify-from-ring="source: #aya_dome_sand_floor; thickness: 0.22"></a-entity>
+AFRAME.registerComponent('solidify-from-ring', {
+  schema: {
+    source:    { type: 'selector' },
+    thickness: { type: 'number', default: 0.22 },
+    maxTries:  { type: 'int', default: 60 },
+    tryEveryMs:{ type: 'int', default: 80 }
+  },
+
+  init: function () {
+    this._tries = 0;
+    this._tickTry = this._tickTry.bind(this);
+    this._timer = setInterval(this._tickTry, this.data.tryEveryMs);
+    this._tickTry();
+  },
+
+  remove: function () {
+    if (this._timer) clearInterval(this._timer);
+  },
+
+  _isReady: function (srcEl) {
+    if (!srcEl) return false;
+    const mesh = srcEl.getObject3D('mesh');
+    if (!mesh || !mesh.geometry) return false;
+
+    // If sculpt components exist, wait until they've applied.
+    const c1 = srcEl.components['floor-seam-sculpt'];
+    if (c1 && !c1._applied) return false;
+    const c2 = srcEl.components['ground-undulate'];
+    if (c2 && !c2._applied) return false;
+    const c3 = srcEl.components['dome-sand-organic'];
+    if (c3 && !c3._applied) return false;
+
+    // Need an indexed geometry (ring primitive is indexed by default).
+    const g = mesh.geometry;
+    return !!(g && g.attributes && g.attributes.position && g.index);
+  },
+
+  _tickTry: function () {
+    const d = this.data;
+    const srcEl = d.source;
+
+    this._tries++;
+    if (this._tries > d.maxTries) {
+      clearInterval(this._timer);
+      return;
+    }
+
+    if (!this._isReady(srcEl)) return;
+
+    clearInterval(this._timer);
+    this._buildFromSource(srcEl);
+  },
+
+  _buildFromSource: function (srcEl) {
+    const d = this.data;
+    const srcMesh = srcEl.getObject3D('mesh');
+    const srcGeom = srcMesh.geometry;
+
+    // Match transforms so the volume is locked to the floor surface.
+    // (Prevents tiny offsets/gaps if the author moved the source later.)
+    const srcObj = srcEl.object3D;
+    const obj = this.el.object3D;
+    obj.position.copy(srcObj.position);
+    obj.quaternion.copy(srcObj.quaternion);
+    obj.scale.copy(srcObj.scale);
+
+    const pos = srcGeom.attributes.position;
+    const idx = srcGeom.index.array;
+    const nV = pos.count;
+
+    // Local direction that corresponds to WORLD up (same trick as floor-seam-sculpt).
+    const qWorld = new THREE.Quaternion();
+    srcMesh.getWorldQuaternion(qWorld);
+    const invQ = qWorld.clone().invert();
+    const upLocal = new THREE.Vector3(0, 1, 0).applyQuaternion(invQ).normalize();
+
+    const t = Math.max(0.001, d.thickness);
+
+    // --- Find boundary edges (edges used by only one triangle) ---
+    const edgeCount = new Map();
+    function eKey(a,b){ return a < b ? (a+'_'+b) : (b+'_'+a); }
+    for (let i=0; i<idx.length; i+=3){
+      const a = idx[i], b = idx[i+1], c = idx[i+2];
+      const k1 = eKey(a,b), k2 = eKey(b,c), k3 = eKey(c,a);
+      edgeCount.set(k1, (edgeCount.get(k1)||0)+1);
+      edgeCount.set(k2, (edgeCount.get(k2)||0)+1);
+      edgeCount.set(k3, (edgeCount.get(k3)||0)+1);
+    }
+
+    const boundary = [];
+    for (let i=0; i<idx.length; i+=3){
+      const a = idx[i], b = idx[i+1], c = idx[i+2];
+      const edges = [[a,b],[b,c],[c,a]];
+      for (const [u,v] of edges){
+        const k = eKey(u,v);
+        if (edgeCount.get(k) === 1) boundary.push([u,v]);
+      }
+    }
+
+    // Build ONLY side walls (no top face), using shared top/bottom vertices.
+    // This removes z-fighting and the "volume piercing" artifact.
+    const positions = new Float32Array(nV * 2 * 3);
+
+    // Copy top verts
+    for (let i=0; i<nV; i++){
+      positions[i*3+0] = pos.getX(i);
+      positions[i*3+1] = pos.getY(i);
+      positions[i*3+2] = pos.getZ(i);
+    }
+
+    // Bottom verts: offset downward along -upLocal
+    for (let i=0; i<nV; i++){
+      const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+      const bx = x - upLocal.x * t;
+      const by = y - upLocal.y * t;
+      const bz = z - upLocal.z * t;
+      const j = nV + i;
+      positions[j*3+0] = bx;
+      positions[j*3+1] = by;
+      positions[j*3+2] = bz;
+    }
+
+    // UVs: reuse top UVs for both layers if present.
+    let uvs = null;
+    if (srcGeom.attributes.uv){
+      const uv = srcGeom.attributes.uv;
+      uvs = new Float32Array(nV * 2 * 2);
+      for (let i=0; i<nV; i++){
+        uvs[i*2+0] = uv.getX(i);
+        uvs[i*2+1] = uv.getY(i);
+        const j = nV + i;
+        uvs[j*2+0] = uv.getX(i);
+        uvs[j*2+1] = uv.getY(i);
+      }
+    }
+
+    // Wall indices
+    const wallIdx = [];
+    for (let i=0; i<boundary.length; i++){
+      const a = boundary[i][0];
+      const b = boundary[i][1];
+      const aB = nV + a;
+      const bB = nV + b;
+      // quad: a -> b -> bB -> aB
+      wallIdx.push(a, b, bB);
+      wallIdx.push(a, bB, aB);
+    }
+
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    if (uvs) g.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+
+    // Try to preserve uv2 if the source has it.
+    if (srcGeom.attributes.uv2){
+      const uv2 = srcGeom.attributes.uv2;
+      const uv2s = new Float32Array(nV * 2 * 2);
+      for (let i=0; i<nV; i++){
+        uv2s[i*2+0] = uv2.getX(i);
+        uv2s[i*2+1] = uv2.getY(i);
+        const j = nV + i;
+        uv2s[j*2+0] = uv2.getX(i);
+        uv2s[j*2+1] = uv2.getY(i);
+      }
+      g.setAttribute('uv2', new THREE.BufferAttribute(uv2s, 2));
+    }
+
+    g.setIndex(wallIdx);
+    g.computeVertexNormals();
+
+    const mesh = new THREE.Mesh(g, null);
+    this.el.setObject3D('mesh', mesh);
+
+    // Make sure our material is applied (A-Frame will set it after object3Dset).
+    this.el.emit('object3dset', {type: 'mesh'});
+  }
+});
+
 /* ============================================================
    Aya — Seat-triggered USER GUIDE + Autopilot sit + Video start
    - Step 1: within ~2m of a rock seat => show guide (E)
@@ -11265,12 +11446,12 @@ AFRAME.registerComponent('cylindrical-clip', {
 
   <!-- Aya Dome sand floor volume (adds thickness; top surface remains the ring above) -->
   <a-entity id="aya_dome_sand_floor_volume"
-      geometry="primitive: extruded-ring; radiusInner: 4.66; radiusOuter: 17.0; height: 0.22; segments: 260"
-      position="0 -0.235 38.7"
-      rotation="0 0 0"
+      position="0 -0.012 38.7"
+      rotation="-90 0 0"
       material="shader: standard; color: #ffffff; src: #groundDiffuse; normalMap: #groundNormal; aoMap: #groundAO; roughnessMap: #groundRough; metalness: 0; roughness: 1; repeat: 6 6; normalScale: 1 1; side: double"
       shadow="cast:false; receive:true"
-      uv2-from-uv></a-entity>
+      uv2-from-uv
+      solidify-from-ring="source: #aya_dome_sand_floor; thickness: 0.22"></a-entity>
 
 
 
