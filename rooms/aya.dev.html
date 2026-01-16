@@ -4640,12 +4640,29 @@ AFRAME.registerComponent('planar-reflector', {
     maxHz: {type: 'number', default: 30},
     // Always refresh if the camera moves a lot (prevents noticeable lag during quick turns).
     forcePosDelta: {type: 'number', default: 0.15},
-    forceAngDelta: {type: 'number', default: 0.02}
+    forceAngDelta: {type: 'number', default: 0.02},
+    // Optional perf gating: skip reflection if the camera is far away.
+    maxDistance: {type: 'number', default: 999},
+    // Optional perf gating: pause reflection when a UI overlay is visible.
+    pauseWhenOverlay: {type: 'boolean', default: false},
+    overlayId: {type: 'string', default: 'ayaFullscreenOverlay'},
+    // Optional perf gating: pause reflection when a video overlay is visible on the pool.
+    pauseWhenVideo: {type: 'boolean', default: false},
+    videoEntityId: {type: 'string', default: 'aya_experience_video'}
   },
 
   init: function () {
     this._setupIfReady = this._setupIfReady.bind(this);
     this.el.addEventListener('object3dset', this._setupIfReady);
+
+    // Optional perf gating (UI/video).
+    this._overlayEl = null;
+    this._videoEl = null;
+    if (typeof document !== 'undefined') {
+      this._overlayEl = document.getElementById(this.data.overlayId);
+      this._videoEl = document.getElementById(this.data.videoEntityId);
+    }
+
     this._setupIfReady();
   },
 
@@ -4743,6 +4760,11 @@ AFRAME.registerComponent('planar-reflector', {
     this._lastCamQuat = new THREE.Quaternion();
     this._tmpCamQuat = new THREE.Quaternion();
 
+    // Avoid per-frame allocations (reduces GC stutter).
+    this._viewVec = new THREE.Vector3();
+    this._lookAtWorld = new THREE.Vector3();
+    this._targetVec = new THREE.Vector3();
+
     // Hook.
     this.mesh.onBeforeRender = (renderer, scene, camera) => {
       if (!camera || !camera.isCamera) return;
@@ -4756,7 +4778,23 @@ AFRAME.registerComponent('planar-reflector', {
       this.normal.set(0, 0, 1).applyMatrix4(this.rotationMatrix);
 
       // Only render when reflector faces camera.
-      const view = this.reflectorWorldPosition.clone().sub(this.cameraWorldPosition);
+      const view = this._viewVec;
+      view.copy(this.reflectorWorldPosition).sub(this.cameraWorldPosition);
+
+      // Optional perf gating: skip updates when the reflector is far from the camera.
+      if (this.data.maxDistance > 0) {
+        const md = this.data.maxDistance;
+        if (view.lengthSq() > (md * md)) return;
+      }
+
+      // Optional perf gating: if overlays are visible, reflection isn't seen anyway.
+      if (this.data.pauseWhenOverlay && this._overlayEl && this._overlayEl.classList && this._overlayEl.classList.contains('visible')) return;
+      if (this.data.pauseWhenVideo && this._videoEl) {
+        const vv = this._videoEl.getAttribute && this._videoEl.getAttribute('visible');
+        if (vv === true || vv === 'true') return;
+      }
+
+      // Only render when reflector faces camera.
       if (view.dot(this.normal) > 0) return;
 
       // Throttle reflection updates (major perf win) while keeping the same look.
@@ -4781,8 +4819,10 @@ AFRAME.registerComponent('planar-reflector', {
       // Virtual camera orientation (mirror of the real camera).
       this.rotationMatrix.extractRotation(camera.matrixWorld);
 
-      const lookAtPosition = this.lookAtPosition.clone().applyMatrix4(this.rotationMatrix).add(this.cameraWorldPosition);
-      const target = this.reflectorWorldPosition.clone().sub(lookAtPosition);
+      const lookAtPosition = this._lookAtWorld;
+      lookAtPosition.copy(this.lookAtPosition).applyMatrix4(this.rotationMatrix).add(this.cameraWorldPosition);
+      const target = this._targetVec;
+      target.copy(this.reflectorWorldPosition).sub(lookAtPosition);
       target.reflect(this.normal).negate();
       target.add(this.reflectorWorldPosition);
 
@@ -11759,7 +11799,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
 
     <!-- Liquid metal surface (square grid clipped to disc; animated micro motion) -->
     <a-entity id="mercury_surface" render-order="value: 3"
-              geometry="primitive: plane; width: 8.120; height: 8.120; segmentsWidth: 200; segmentsHeight: 200"              rotation="-90 0 0"
+              geometry="primitive: plane; width: 8.120; height: 8.120; segmentsWidth: 128; segmentsHeight: 128"              rotation="-90 0 0"
               position="0 0.045 38.7"
               material="shader: standard; color: #343a43; metalness: 1.0; roughness: 0.06; envMapIntensity: 1.25; emissive: #000000; emissiveIntensity: 0; transparent: false; opacity: 1; side: double; depthWrite: true; depthTest: true; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"
               mercury-surface-gpu="amp: 0.038; radius: 4.05; maxDown: 0.022; speed: 0.240; rippleFreq: 2.8; whirlCount: 5; lifeMin: 9; lifeMax: 22; drift: 0.030; seed: 17"
@@ -11771,16 +11811,16 @@ AFRAME.registerComponent('seam-grain-fringe', {
 
     <!-- Planar reflection overlay (dynamic reflection of the split sphere on the mercury surface) -->
     <a-entity id="mercury_surface_reflection" render-order="value: 6"
-              geometry="primitive: circle; radius: 4.05; segments: 96"
+              geometry="primitive: circle; radius: 4.05; segments: 64"
               rotation="-90 0 0"
               position="0 0.052 38.7"
-              planar-reflector="resolution: 1024; color: #15181f; opacity: 0.46; clipBias: 0.003"
+              planar-reflector="resolution: 512; maxHz: 12; forcePosDelta: 0.06; forceAngDelta: 0.04; maxDistance: 18; pauseWhenOverlay: true; pauseWhenVideo: true; color: #15181f; opacity: 0.46; clipBias: 0.003"
               shadow="cast:false; receive:false"></a-entity>
     <!-- Experience video overlay (enabled when seated + user presses F) -->
     <a-entity id="aya_experience_video"
               visible="false"
               render-order="value: 7"
-              geometry="primitive: circle; radius: 4.05; segments: 96"
+              geometry="primitive: circle; radius: 4.05; segments: 64"
               rotation="-90 0 0"
               position="0 0.055 38.7"
               material="shader: flat; src: #ayaExperienceVideo; side: double; transparent: true; opacity: 1; depthTest: true; polygonOffset: true; polygonOffsetFactor: -4; polygonOffsetUnits: -4"></a-entity>
@@ -11815,7 +11855,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
 </a-entity>
 
 <a-entity id="mercury_surface_fill" render-order="value: 2"
-          geometry="primitive: plane; width: 8.120; height: 8.120; segmentsWidth: 180; segmentsHeight: 180"
+          geometry="primitive: plane; width: 8.120; height: 8.120; segmentsWidth: 96; segmentsHeight: 96"
           disc-clip="radius: 4.050"
           rotation="-90 0 0"
           position="0 -0.070 38.7"
@@ -11824,7 +11864,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
 
     <!-- Subsurface safety layer (always liquid beneath; prevents any accidental ground peek-through) -->
     <a-entity id="mercury_subsurface" render-order="value: 1"
-              geometry="primitive: plane; width: 8.120; height: 8.120; segmentsWidth: 120; segmentsHeight: 120"
+              geometry="primitive: plane; width: 8.120; height: 8.120; segmentsWidth: 64; segmentsHeight: 64"
               rotation="-90 0 0"
               position="0 -0.160 38.7"
               material="shader: standard; color: #272d35; metalness: 1.0; roughness: 0.14; envMapIntensity: 0.95; transparent: false; opacity: 1; side: double; depthWrite: true; depthTest: true"
