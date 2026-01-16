@@ -2067,6 +2067,34 @@ const far = this.data.avoidDist;
 })();
 </script>
 <!-- ===== END NPC SYSTEM ===== -->
+
+<style>
+  /* ===== Elevator ride fullscreen video overlay ===== */
+  #elevatorVideoOverlay{
+    position: fixed;
+    inset: 0;
+    display: none;           /* toggled on demand */
+    align-items: center;
+    justify-content: center;
+    background: #000;
+    z-index: 99999;          /* above A-Frame canvas */
+    opacity: 0;
+    pointer-events: none;
+  }
+  #elevatorVideoOverlay.active{
+    display: flex;
+    pointer-events: auto;
+  }
+  #elevatorVideoOverlay video{
+    width: 100vw;
+    height: 100vh;
+    object-fit: cover;
+    background: #000;
+  }
+  #elevatorVideoOverlay.fadeIn{ transition: opacity 250ms ease; opacity: 1; }
+  #elevatorVideoOverlay.fadeOut{ transition: opacity 450ms ease; opacity: 0; }
+</style>
+
 </head>
 <body>
 <!-- ===== UI OVERLAY: Elevator User Guide (outside A-Frame canvas) ===== -->
@@ -2085,6 +2113,15 @@ const far = this.data.avoidDist;
 </div>
 <!-- ===== END UI OVERLAY ===== -->
 <div id="hint" style="display:none"></div>
+<!-- ===== UI OVERLAY: Elevator Ride Video (fullscreen) ===== -->
+<div id="elevatorVideoOverlay" aria-hidden="true">
+  <video id="elevatorRideVideo" playsinline webkit-playsinline preload="auto" tabindex="-1"
+         disablepictureinpicture disableremoteplayback controlslist="nodownload noplaybackrate noremoteplayback">
+    <source src="elevator_ride.mp4" type="video/mp4"/>
+  </video>
+</div>
+<!-- ===== END UI OVERLAY ===== -->
+
 <!-- ===== ERA ORA Intro / Loading UI ===== -->
 <div aria-live="polite" id="bootScreen" role="status">
 <div id="bootInner">
@@ -5778,6 +5815,7 @@ AFRAME.registerComponent('pbr-carpet', {
     setupOnce._done = true;
 
     const elevator = document.querySelector('#industrial_elevator_1');
+  
     const cam = document.querySelector('#playerCam');
     const callPanel = document.querySelector('#elevator1_call_panel') || document.querySelector('#elevator1_call_button');
     const doorL = document.querySelector('#elevator1_door_L');
@@ -5830,6 +5868,393 @@ AFRAME.registerComponent('pbr-carpet', {
 })();
 </script>
 <!-- ===== END INSERTED: Elevator Key Activation + Open Message ===== -->
+
+<script>
+/*
+  Autopilot UX (player-friendly):
+  - E toggles doors (existing)
+  - With doors OPEN, press F once: autopilot turns (if needed) and WALKS you forward to:
+      waypoint A = just outside doors
+      waypoint B = inside cab (ride frame)
+    Then it turns you to face OUT (toward hallway) and shows: "Press F again to confirm descent."
+  - Press F again: doors close, USER GUIDE hides, fade + play ./elevator_ride.mp4
+  - This file is a test: it ends when the video ends (no room swap yet).
+*/
+(function () {
+  const KEY_PRIMARY = 'KeyF';
+
+  const WALK_SPEED_MPS = 1.6;        // forward walk speed
+  const TURN_SPEED_DPS = 240;        // yaw turn speed
+  const ARRIVE_EPS = 0.07;           // meters
+  const AUDIO_FADE_MS = 2500;
+  const DEFAULT_CLOSE_DELAY_MS = 600; // fallback if door anim dur can't be read
+  const CLOSE_BUFFER_MS = 80;
+  let closeDelayMs = DEFAULT_CLOSE_DELAY_MS;
+
+  // Derive door close duration from the actual A-Frame animation on the doors.
+  // This ensures the elevator ride video starts only after the doors have finished closing.
+  (function computeCloseDelay(){
+    const dL = document.querySelector('#elevator1_door_L');
+    const dR = document.querySelector('#elevator1_door_R');
+    const animClose = (dL && dL.getAttribute('animation__close_pos')) || (dR && dR.getAttribute('animation__close_pos')) || '';
+    const mDur = /dur:\s*(\d+)/.exec(String(animClose));
+    if (mDur) closeDelayMs = parseInt(mDur[1], 10) + CLOSE_BUFFER_MS;
+  })();
+// Waypoints in ELEVATOR LOCAL space (assumes doors on +Z, cab extends into -Z)
+  const WP_OUTSIDE_LOCAL = new THREE.Vector3(0, 0, 0.85);   // ~85cm outside doors
+  const WP_INSIDE_LOCAL  = new THREE.Vector3(0, 0, -0.55);  // ~55cm inside cab
+
+  const elevator = document.querySelector('#industrial_elevator_1');
+  const rig = document.querySelector('#rig');
+  const cam = document.querySelector('#playerCam');
+  const doorL = document.querySelector('#elevator1_door_L');
+  const doorR = document.querySelector('#elevator1_door_R');
+
+  const guide = document.getElementById('elevatorGuide');
+  const guideChoice = document.getElementById('elevatorChoice');
+  const hint = document.getElementById('hint');
+
+  const overlay = document.getElementById('elevatorVideoOverlay');
+  const rideVideo = document.getElementById('elevatorRideVideo');
+
+  if (!elevator || !rig || !cam || !doorL || !doorR || !guide || !guideChoice || !overlay || !rideVideo) return;
+
+  // --- helpers
+  const DEG2RAD = Math.PI / 180;
+  const RAD2DEG = 180 / Math.PI;
+  const v3a = new THREE.Vector3();
+  const v3b = new THREE.Vector3();
+  const v3c = new THREE.Vector3();
+  const q1  = new THREE.Quaternion();
+  const eul = new THREE.Euler(0,0,0,'YXZ');
+
+  function clamp01(t){ return Math.max(0, Math.min(1, t)); }
+  function wrapRad(a){
+    while (a > Math.PI) a -= Math.PI * 2;
+    while (a < -Math.PI) a += Math.PI * 2;
+    return a;
+  }
+  function yawTo(fromWorld, toWorld){
+    const dx = toWorld.x - fromWorld.x;
+    const dz = toWorld.z - fromWorld.z;
+    return Math.atan2(dx, dz); // yaw (Y) so that forward (+Z) points toward target
+  }
+  function getWorldYawOfElevatorFacingOut(){
+    // "Facing out" is elevator local +Z
+    elevator.object3D.getWorldQuaternion(q1);
+    eul.setFromQuaternion(q1, 'YXZ');
+    return eul.y; // radians
+  }
+  function isDoorOpen() {
+    const c = elevator.components && elevator.components['elevator-toggle'];
+    if (c && typeof c.isOpen === 'boolean') return c.isOpen;
+    const p = doorL.getAttribute('position');
+    return p && Math.abs(p.x) > 1.2;
+  }
+
+  function setGuideHtml(html){
+    guide.classList.add('show');
+    guideChoice.innerHTML = html;
+    guideChoice.style.opacity = '1';
+    guide.style.opacity = '1';
+  }
+  function hideGuide(){
+    guide.classList.remove('show');
+    guide.style.opacity = '0';
+    guideChoice.style.opacity = '0';
+  }
+  let hintTimer = null;
+  function flashHint(text, ms=900){
+    if (!hint) return;
+    hint.textContent = text;
+    hint.style.opacity = '1';
+    if (hintTimer) clearTimeout(hintTimer);
+    hintTimer = setTimeout(()=>{ hint.style.opacity = '0'; }, ms);
+  }
+
+  function pauseMovement(disable){
+    // disable WASD + look-controls while autopilot runs / video plays
+    const wasd = rig.components['wasd-controls'];
+    if (wasd) wasd.enabled = !disable;
+
+    const lc = cam.components['look-controls'];
+    if (lc) lc.enabled = !disable;
+  }
+
+  function setCameraYawPitch(yawDeg, pitchDeg){
+    const lc = cam.components['look-controls'];
+    if (!lc) return;
+    const yawRad = yawDeg * DEG2RAD;
+    const pitchRad = pitchDeg * DEG2RAD;
+    if (lc.yawObject) lc.yawObject.rotation.y = yawRad;
+    if (lc.pitchObject) lc.pitchObject.rotation.x = pitchRad;
+  }
+  function getCameraYawRad(){
+    const lc = cam.components['look-controls'];
+    if (lc && lc.yawObject) return lc.yawObject.rotation.y;
+    // fallback: rig rotation
+    return rig.object3D.rotation.y;
+  }
+  function setCameraYawRad(yawRad){
+    const lc = cam.components['look-controls'];
+    if (lc && lc.yawObject){
+      lc.yawObject.rotation.y = yawRad;
+      return;
+    }
+    rig.object3D.rotation.y = yawRad;
+  }
+
+  function fadeOutSceneAudio(ms){
+    // Fade <audio> tags
+    document.querySelectorAll('audio').forEach(a=>{
+      try {
+        const start = a.volume;
+        const t0 = performance.now();
+        const tick = () => {
+          const k = clamp01((performance.now()-t0)/ms);
+          a.volume = start * (1-k);
+          if (k < 1) requestAnimationFrame(tick);
+          else a.pause();
+        };
+        tick();
+      } catch(e){}
+    });
+    // Fade A-Frame sound components
+    document.querySelectorAll('[sound]').forEach(el=>{
+      const s = el.components && el.components.sound;
+      if (!s || !s.isPlaying || !s.sound) return;
+      try{
+        const gain = s.sound.getOutput().gain;
+        const start = gain.value;
+        const t0 = performance.now();
+        const tick = () => {
+          const k = clamp01((performance.now()-t0)/ms);
+          gain.value = start * (1-k);
+          if (k < 1) requestAnimationFrame(tick);
+          else { try{s.stopSound();}catch(e){} }
+        };
+        tick();
+      }catch(e){}
+    });
+  }
+
+  // --- state
+  const STATE = { IDLE:0, AUTOPILOT:1, READY_CONFIRM:2, VIDEO:3 };
+  let state = STATE.IDLE;
+
+  function resetIdleUI(){
+    // Reset the choice line to the player-facing instructions.
+    guideChoice.innerHTML = 'Open doors with <span class="keycap">E</span>, then press <span class="keycap keycap-ask">F</span> to step inside (autopilot). Once you are inside and facing out, press <span class="keycap keycap-ask">F</span> again to descend.';
+  }
+
+  // --- movement core: rotate toward desired yaw, then walk forward along current yaw
+  function walkToward(targetWorld){
+    return new Promise((resolve) => {
+      const startYaw = getCameraYawRad();
+      let curYaw = startYaw;
+      let last = performance.now();
+
+      function step(now){
+        const dt = Math.max(0.001, (now-last)/1000);
+        last = now;
+
+        rig.object3D.getWorldPosition(v3a);
+
+        // arrived?
+        v3b.copy(targetWorld);
+        const dx = v3b.x - v3a.x;
+        const dz = v3b.z - v3a.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist <= ARRIVE_EPS){
+          resolve();
+          return;
+        }
+
+        // desired yaw toward waypoint
+        const desiredYaw = yawTo(v3a, v3b);
+        const delta = wrapRad(desiredYaw - curYaw);
+
+        // rotate toward desired yaw (but don't overshoot)
+        const maxTurn = (TURN_SPEED_DPS * DEG2RAD) * dt;
+        const turn = Math.abs(delta) <= maxTurn ? delta : Math.sign(delta) * maxTurn;
+        curYaw = wrapRad(curYaw + turn);
+        setCameraYawRad(curYaw);
+
+        // walk forward along current yaw
+        const stepDist = Math.min(dist, WALK_SPEED_MPS * dt);
+        const stepX = Math.sin(curYaw) * stepDist;
+        const stepZ = Math.cos(curYaw) * stepDist;
+
+        // Apply in world space (rig is parented in world; simplest is direct position add)
+        rig.object3D.position.x += stepX;
+        rig.object3D.position.z += stepZ;
+
+        requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    });
+  }
+
+  function worldFromLocal(localVec){
+    const w = localVec.clone();
+    elevator.object3D.localToWorld(w);
+    return w;
+  }
+
+  async function runAutopilot(){
+    // Capture where the user IS and where they are LOOKING (implicitly via curYaw).
+    flashHint('Autopilot…');
+
+    const wpOutside = worldFromLocal(WP_OUTSIDE_LOCAL);
+    const wpInside  = worldFromLocal(WP_INSIDE_LOCAL);
+
+    // Walk to outside threshold, then step inside.
+    await walkToward(wpOutside);
+    await walkToward(wpInside);
+
+    // Now turn to face OUT (hallway) only AFTER inside.
+    const faceOutYaw = getWorldYawOfElevatorFacingOut();
+    await new Promise((resolve)=>{
+      let curYaw = getCameraYawRad();
+      let last = performance.now();
+      function step(now){
+        const dt = Math.max(0.001,(now-last)/1000); last=now;
+        const delta = wrapRad(faceOutYaw - curYaw);
+        const maxTurn = (TURN_SPEED_DPS * DEG2RAD) * dt;
+        const turn = Math.abs(delta) <= maxTurn ? delta : Math.sign(delta)*maxTurn;
+        curYaw = wrapRad(curYaw + turn);
+        setCameraYawRad(curYaw);
+        // done?
+        if (Math.abs(wrapRad(faceOutYaw - curYaw)) < (2 * DEG2RAD)){
+          // level pitch/roll
+          setCameraYawPitch(curYaw * RAD2DEG, 0);
+          resolve();
+          return;
+        }
+        requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    });
+  }
+
+  function toggleDoorsClose(){
+    // Use your existing elevator-toggle contract
+    elevator.emit('elevator1-toggle');
+  }
+
+  function startOverlayVideo(){
+    // Hide guide immediately for immersion
+    hideGuide();
+
+    overlay.style.pointerEvents = 'auto';
+    overlay.style.display = 'flex';
+    overlay.classList.add('active');
+    overlay.classList.remove('fadeOut');
+    overlay.classList.add('fadeIn');
+
+    // Ensure the browser sees this play() as a direct result of key press (gesture-safe).
+    rideVideo.src = './elevator_ride.mp4';
+    rideVideo.currentTime = 0;
+    rideVideo.muted = false;
+
+    const playPromise = rideVideo.play();
+    if (playPromise && typeof playPromise.catch === 'function') {
+      playPromise.catch(() => {
+        // If autoplay policy blocks, try muted as fallback (still shows video).
+        rideVideo.muted = true;
+        rideVideo.play().catch(()=>{});
+      });
+    }
+
+    // Preload next room while the video plays
+    if (window.preloadAyaFragment) window.preloadAyaFragment();
+
+    rideVideo.onended = () => {
+      // IMPORTANT: don't fade the overlay to transparent before navigating,
+      // otherwise you'll briefly reveal the underlying (fear-room) scene.
+      // Hold a fully-opaque black cover and redirect on the next frames.
+      overlay.classList.remove('fadeIn');
+      overlay.classList.remove('fadeOut');
+      overlay.style.display = 'flex';
+      overlay.style.background = 'rgba(0,0,0,1)';
+      overlay.style.opacity = '1';
+      overlay.style.zIndex = '99999';
+
+      // Ensure styles apply before hard navigation.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          window.location.href = './rooms/aya.dev.html';
+        });
+      });
+    };
+  }
+
+  function onFirstF(){
+    if (state !== STATE.IDLE) return;
+
+    // Only gate: doors must be open (per your new UX).
+    if (!isDoorOpen()) {
+      setGuideHtml('Open the doors with <span class="keycap keycap-small">E</span>, then press <span class="keycap keycap-ask">F</span>.');
+      flashHint('Open doors (E)', 900);
+      return;
+    }
+
+    state = STATE.AUTOPILOT;
+    setGuideHtml('Autopilot engaged…');
+
+    pauseMovement(true);
+    fadeOutSceneAudio(AUDIO_FADE_MS);
+
+    runAutopilot().then(()=>{
+      state = STATE.READY_CONFIRM;
+      setGuideHtml('Press <span class="keycap keycap-ask">F</span> again to confirm descent.');
+      flashHint('Ready', 800);
+    }).catch(()=>{
+      // Safety: reset if something goes wrong
+      state = STATE.IDLE;
+      pauseMovement(false);
+      setGuideHtml('Autopilot failed. Press <span class="keycap keycap-ask">F</span> to try again.');
+    });
+  }
+
+  function onSecondF(){
+    if (state !== STATE.READY_CONFIRM) return;
+    state = STATE.VIDEO;
+
+    // Close doors only on confirm (your desired UX).
+    toggleDoorsClose();
+
+    setTimeout(()=>{
+      startOverlayVideo();
+    }, closeDelayMs);
+  }
+
+  function onKeyDown(e){
+    const active = document.activeElement;
+    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
+
+    const code = e.code || '';
+    const key = (e.key || '').toLowerCase();
+    const isF = (code === KEY_PRIMARY) || (key === 'f');
+    if (!isF || e.repeat) return;
+
+    if (e.preventDefault) e.preventDefault();
+
+    // Always give immediate feedback so it never feels dead
+    flashHint('F', 300);
+
+    if (state === STATE.IDLE) return onFirstF();
+    if (state === STATE.READY_CONFIRM) return onSecondF();
+  }
+
+  // Attach key listeners robustly
+  window.addEventListener('keydown', onKeyDown, true);
+  document.addEventListener('keydown', onKeyDown, true);
+
+  resetIdleUI();
+})();
+</script>
+
 <script id="eraoraIntroScript">
 (function () {
   const BOOT = document.getElementById('bootScreen');
