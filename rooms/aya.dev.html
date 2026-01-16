@@ -3165,6 +3165,277 @@ AFRAME.registerComponent('mercury-surface', {
 
 
 
+
+
+// ===== Mercury surface (GPU, PBR-preserving) =====
+// Drops ALL per-frame CPU vertex deformation + normal recompute.
+// Instead, injects the original heightfield logic into MeshStandardMaterial's vertex shader
+// and derives normals from the heightfield (finite differences) so highlights stay "alive".
+AFRAME.registerComponent('mercury-surface-gpu', {
+  schema: {
+    amp:        { type: 'number', default: 0.018 },
+    maxDown:    { type: 'number', default: 0.030 },
+    speed:      { type: 'number', default: 0.55  },
+    rippleFreq: { type: 'number', default: 2.8   },
+    whirlCount: { type: 'int',    default: 6     },
+    radius:     { type: 'number', default: 0.0   },
+    lifeMin:    { type: 'number', default: 6.0   },
+    lifeMax:    { type: 'number', default: 16.0  },
+    drift:      { type: 'number', default: 0.10  },
+    seed:       { type: 'number', default: 17    }
+  },
+
+  init: function () {
+    this._mesh = null;
+    this._shader = null;
+
+    this._apply = this._apply.bind(this);
+    this.el.addEventListener('object3dset', this._apply);
+    this.el.addEventListener('loaded', this._apply);
+    setTimeout(this._apply, 0);
+  },
+
+  remove: function () {
+    this.el.removeEventListener('object3dset', this._apply);
+    this.el.removeEventListener('loaded', this._apply);
+    if (this._mesh && this._mesh.material && this._mesh.material.onBeforeCompile) {
+      // Leave material intact; do not hard-reset (avoids side effects).
+    }
+  },
+
+  _findMesh: function () {
+    const root = this.el.getObject3D('mesh');
+    if (!root) return null;
+    let mesh = null;
+    if (root.isMesh) mesh = root;
+    else if (root.traverse) {
+      root.traverse((o)=>{ if(mesh) return; if(o && o.isMesh) mesh = o; });
+    }
+    return mesh;
+  },
+
+  _apply: function () {
+    const mesh = this._findMesh();
+    if (!mesh || !mesh.material) return;
+
+    // Only target Standard/PBR materials.
+    const mat = mesh.material;
+    if (!mat.isMeshStandardMaterial) return;
+
+    // Avoid re-patching the same material.
+    if (mat.userData && mat.userData.__mercurySurfaceGPU) {
+      this._mesh = mesh;
+      this._shader = mat.userData.__mercurySurfaceGPU;
+      return;
+    }
+
+    this._mesh = mesh;
+
+    const self = this;
+    mat.onBeforeCompile = function (shader) {
+      shader.uniforms.uTime = { value: 0.0 };
+      shader.uniforms.uAmp = { value: self.data.amp };
+      shader.uniforms.uMaxDown = { value: self.data.maxDown };
+      shader.uniforms.uSpeed = { value: self.data.speed };
+      shader.uniforms.uRippleFreq = { value: self.data.rippleFreq };
+      shader.uniforms.uWhirlCount = { value: Math.max(1, Math.min(6, self.data.whirlCount|0)) };
+      shader.uniforms.uR = { value: (self.data.radius && self.data.radius > 0) ? self.data.radius : 4.05 };
+      shader.uniforms.uLifeMin = { value: self.data.lifeMin };
+      shader.uniforms.uLifeMax = { value: self.data.lifeMax };
+      shader.uniforms.uDrift = { value: self.data.drift };
+      shader.uniforms.uSeed = { value: self.data.seed };
+
+      const header = `
+        uniform float uTime;
+        uniform float uAmp;
+        uniform float uMaxDown;
+        uniform float uSpeed;
+        uniform float uRippleFreq;
+        uniform int   uWhirlCount;
+        uniform float uR;
+        uniform float uLifeMin;
+        uniform float uLifeMax;
+        uniform float uDrift;
+        uniform float uSeed;
+
+        float ms_smoothstep(float e0, float e1, float x){
+          float t = clamp((x - e0) / (e1 - e0), 0.0, 1.0);
+          return t*t*(3.0 - 2.0*t);
+        }
+
+        float ms_hash(float n){ return fract(sin(n) * 43758.5453123); }
+
+        // Original heightfield logic, ported from mercury-surface (CPU) to GLSL.
+        float mercuryHeight(vec2 p){
+          float time = uTime * uSpeed;
+          float x0 = p.x;
+          float y0 = p.y;
+          float r  = length(p);
+
+          float rimFade = ms_smoothstep(uR * 1.00, uR * 0.86, r);
+
+          float a = uAmp;
+          float z = 0.0;
+          z += a * 0.32 * sin(x0 * 0.62 + time * 0.70);
+          z += a * 0.28 * sin(y0 * 0.58 - time * 0.57);
+          z += a * 0.20 * sin((x0 + y0) * 0.36 + time * 0.41);
+          z += a * 0.16 * sin(r * uRippleFreq - time * 0.98);
+
+          // Fixed set of procedural "cells" (no CPU-side spawning).
+          // Each cell cycles with a pseudo-random lifetime and envelope to mimic appearing/disappearing vortices.
+          for (int j = 0; j < 6; j++) {
+            if (j >= uWhirlCount) break;
+
+            float fj = float(j);
+            float n1 = ms_hash(uSeed * 78.233 + (fj + 1.0) * 12.9898);
+            float n2 = ms_hash(uSeed * 45.117 + (fj + 1.0) * 39.3467);
+            float n3 = ms_hash(uSeed * 11.731 + (fj + 1.0) * 91.1329);
+            float n4 = ms_hash(uSeed * 63.917 + (fj + 1.0) * 17.8193);
+            float n5 = ms_hash(uSeed * 22.419 + (fj + 1.0) * 53.1211);
+            float n6 = ms_hash(uSeed * 93.007 + (fj + 1.0) * 27.1137);
+            float n7 = ms_hash(uSeed * 14.271 + (fj + 1.0) * 71.7777);
+            float n8 = ms_hash(uSeed * 58.911 + (fj + 1.0) * 19.3333);
+
+            // Position bias similar to CPU version
+            float rr0  = sqrt(max(0.06, n1)) * (uR * 0.78);
+            float ang0 = n2 * 6.28318530718;
+            vec2 baseC = vec2(cos(ang0), sin(ang0)) * rr0;
+
+            // Cell size / dynamics
+            float sigma = (0.55 + n3 * 0.85) * (uR * 0.22);
+            float life  = mix(max(0.1, uLifeMin), max(uLifeMin + 0.1, uLifeMax), n4);
+            float phase = n5 * 6.28318530718;
+
+            float arms = floor(3.0 + n6 * 4.0); // 3..6
+            float spin = (n7 * 2.0 - 1.0) * (0.55 + n8 * 0.75);
+
+            float lift = 0.65 + ms_hash(uSeed * 5.2 + (fj + 1.0) * 1.7) * 0.55;
+            float roll = 0.55 + ms_hash(uSeed * 2.1 + (fj + 1.0) * 7.9) * 0.70;
+
+            // Drift (bounded, sinusoidal — avoids CPU bounce logic but preserves slow travel)
+            float driftMag = (0.35 + ms_hash(uSeed * 8.8 + (fj + 1.0) * 0.4) * 0.65) * uDrift;
+            float driftAng = ms_hash(uSeed * 1.1 + (fj + 1.0) * 5.4) * 6.28318530718;
+            vec2 driftDir  = vec2(cos(driftAng), sin(driftAng));
+            vec2 driftPerp = vec2(-driftDir.y, driftDir.x);
+            vec2 c = baseC
+                   + driftDir  * (driftMag * sin(uTime * 0.17 + phase))
+                   + driftPerp * (driftMag * 0.55 * cos(uTime * 0.13 + phase * 1.7));
+
+            // Envelope (appear/disappear)
+            float age = mod(uTime + phase * 0.37, life);
+            float riseDur = min(2.0, life * 0.25);
+            float fallDur = min(3.5, life * 0.30);
+            float form = ms_smoothstep(0.0, riseDur, age);
+            float fade = 1.0 - ms_smoothstep(life - fallDur, life, age);
+            float env  = form * fade;
+            if (env <= 0.0001) continue;
+
+            vec2 d = p - c;
+            float rr = length(d);
+            float g  = exp(-(rr*rr) / (2.0 * sigma * sigma));
+            float ang = atan(d.y, d.x);
+
+            float spinT = time * (0.85 + 0.65 * abs(spin));
+
+            float coreSigma = max(0.08, sigma * 0.32);
+            float gCore = exp(-(rr*rr) / (2.0 * coreSigma * coreSigma));
+            float funnel = (-a * (1.15 * lift) * env * gCore * (0.70 + 0.30 * sin(spinT * 0.35 + phase))) * 0.55;
+
+            float lipR = sigma * (0.55 + 0.08 * sin(phase));
+            float lipW = max(0.06, sigma * 0.18);
+            float dLip = (rr - lipR);
+            float lipG = exp(-(dLip*dLip) / (2.0 * lipW * lipW));
+            float lip  =  a * 0.55 * env * lipG * (0.55 + 0.45 * g);
+
+            float tighten = 2.8 + 2.1 / max(0.35, sigma);
+            float spiral = sin(ang * arms + rr * tighten - spinT * (1.35 * spin) + phase);
+            float shear  = a * (0.80 * roll) * env * g * spiral;
+
+            float inward = sin(rr * (7.2 + 0.9 * arms) - spinT * 0.95 + phase * 0.7);
+            float suctionMask = (1.0 - ms_smoothstep(sigma * 0.15, sigma * 1.35, rr));
+            float suction = a * 0.25 * env * g * inward * suctionMask;
+
+            float breathe = sin(time * 0.55 + phase + rr * 1.4);
+            float bulge   = a * 0.18 * env * g * breathe;
+
+            z += (funnel + lip + shear + suction + bulge);
+          }
+
+          z *= rimFade;
+          if (uMaxDown > 0.0) z = max(z, -uMaxDown);
+          return z;
+        }
+      `;
+
+      // Inject helpers + height function near the top of the vertex shader.
+      shader.vertexShader = shader.vertexShader.replace(
+        'void main() {',
+        header + '\n\nvoid main() {'
+      );
+
+      // Ensure local XY is available for fragment disc clipping.
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <common>',
+        '#include <common>\nvarying vec2 vDiscLocalXY;'
+      );
+
+      // Displace vertices (object space): plane uses XY, displace along +Z (matches CPU version).
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <begin_vertex>',
+        `
+          vec3 transformed = vec3( position );
+          vDiscLocalXY = position.xy;
+          float mh = mercuryHeight(position.xy);
+          transformed.z += mh;
+        `
+      );
+
+      // Override objectNormal to match heightfield (finite differences).
+      shader.vertexShader = shader.vertexShader.replace(
+        '#include <beginnormal_vertex>',
+        `
+          #include <beginnormal_vertex>
+          // Heightfield-derived normal in object space
+          float eps = 0.02;
+          float hx1 = mercuryHeight(position.xy + vec2(eps, 0.0));
+          float hx0 = mercuryHeight(position.xy - vec2(eps, 0.0));
+          float hy1 = mercuryHeight(position.xy + vec2(0.0, eps));
+          float hy0 = mercuryHeight(position.xy - vec2(0.0, eps));
+          float dzdx = (hx1 - hx0) / (2.0 * eps);
+          float dzdy = (hy1 - hy0) / (2.0 * eps);
+          objectNormal = normalize(vec3(-dzdx, -dzdy, 1.0));
+        `
+      );
+
+      // Disc clip in fragment shader (keeps pool inside ring even if other components overwrite onBeforeCompile).
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying vec2 vDiscLocalXY;\nuniform float uR;')
+        .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\nif (length(vDiscLocalXY) > uR) discard;');
+
+      self._shader = shader;
+      mat.userData.__mercurySurfaceGPU = shader;
+    };
+
+    mat.needsUpdate = true;
+  },
+
+  tick: function (t) {
+    if (!this._shader) return;
+    const s = (t || 0) * 0.001;
+    this._shader.uniforms.uTime.value = s;
+    this._shader.uniforms.uAmp.value = this.data.amp;
+    this._shader.uniforms.uMaxDown.value = this.data.maxDown;
+    this._shader.uniforms.uSpeed.value = this.data.speed;
+    this._shader.uniforms.uRippleFreq.value = this.data.rippleFreq;
+    this._shader.uniforms.uWhirlCount.value = Math.max(1, Math.min(6, this.data.whirlCount|0));
+    this._shader.uniforms.uR.value = (this.data.radius && this.data.radius > 0) ? this.data.radius : this._shader.uniforms.uR.value;
+    this._shader.uniforms.uLifeMin.value = this.data.lifeMin;
+    this._shader.uniforms.uLifeMax.value = this.data.lifeMax;
+    this._shader.uniforms.uDrift.value = this.data.drift;
+    this._shader.uniforms.uSeed.value = this.data.seed;
+  }
+});
+
 // ===== Dome-style floor sculpt + rubble clusters (ported from 01_dome_safe_01) =====
 AFRAME.registerComponent('floor-seam-sculpt', {
   schema: {
@@ -11103,8 +11374,8 @@ AFRAME.registerComponent('cylindrical-clip', {
 
     <!-- Inner rock shaft: a real basin wall going down (so the pool is not a sheet) -->
     <a-entity id="mercury_basin_cavity_wall"
-              geometry="primitive: cylinder; radius: 4.26; height: 70.0; openEnded: true; segmentsRadial: 96; segmentsHeight: 120"
-              position="0 -35.0 38.7"
+              geometry="primitive: cylinder; radius: 4.26; height: 20.0; openEnded: true; segmentsRadial: 96; segmentsHeight: 120"
+              position="0 -10.0 38.7"
               material="shader: standard; color:#f1f1f1; src:#moonDiffuse; normalMap:#moonNormal; roughnessMap:#moonRough; aoMap:#moonAO; metalness:0; roughness:1; repeat: 8 5; normalScale: 0.95 -0.95; side: back"
               cave-displace="amp: 0.18; freq: 2.10; macroFreq: 0.36; macroAmp: 0.30; seed: 241; oct: 3; lac: 2.1; gain: 0.55"
               shadow="cast:false; receive:true" uv2-from-uv ao-tune="value: 0.70"></a-entity>
@@ -11146,10 +11417,9 @@ AFRAME.registerComponent('cylindrical-clip', {
     <!-- Liquid metal surface (square grid clipped to disc; animated micro motion) -->
     <a-entity id="mercury_surface" render-order="value: 3"
               geometry="primitive: plane; width: 8.120; height: 8.120; segmentsWidth: 200; segmentsHeight: 200"              rotation="-90 0 0"
-              disc-clip="radius: 4.050"
               position="0 0.045 38.7"
               material="shader: standard; color: #343a43; metalness: 1.0; roughness: 0.06; envMapIntensity: 1.25; emissive: #000000; emissiveIntensity: 0; transparent: false; opacity: 1; side: double; depthWrite: true; depthTest: true; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"
-              mercury-surface="amp: 0.038; radius: 4.05; maxDown: 0.022; speed: 0.240; rippleFreq: 2.8; whirlCount: 5; lifeMin: 9; lifeMax: 22; drift: 0.030; seed: 17"
+              mercury-surface-gpu="amp: 0.038; radius: 4.05; maxDown: 0.022; speed: 0.240; rippleFreq: 2.8; whirlCount: 5; lifeMin: 9; lifeMax: 22; drift: 0.030; seed: 17"
               shadow="cast:false; receive:false" mercury-ibl-silver="intensity: 1">
     <!-- Liquid metal fill layer (prevents ground peek-through when the top surface dimples) -->
     
@@ -11207,13 +11477,11 @@ AFRAME.registerComponent('cylindrical-clip', {
           rotation="-90 0 0"
           position="0 -0.070 38.7"
           material="shader: standard; color: #2f353e; metalness: 1.0; roughness: 0.06; transparent: true; opacity: 0.98; polygonOffset: true; polygonOffsetFactor: -1; polygonOffsetUnits: -1"
-          mercury-surface="amp: 0.018; radius: 4.05; maxDown: 0.010; speed: 0.210; rippleFreq: 2.4; whirlCount: 4; lifeMin: 8; lifeMax: 18; drift: 0.040; seed: 18"
           shadow="cast:false; receive:false" mercury-ibl-silver="intensity: 0.9"></a-entity>
 
     <!-- Subsurface safety layer (always liquid beneath; prevents any accidental ground peek-through) -->
     <a-entity id="mercury_subsurface" render-order="value: 1"
               geometry="primitive: plane; width: 8.120; height: 8.120; segmentsWidth: 120; segmentsHeight: 120"
-              disc-clip="radius: 4.050"
               rotation="-90 0 0"
               position="0 -0.160 38.7"
               material="shader: standard; color: #272d35; metalness: 1.0; roughness: 0.14; envMapIntensity: 0.95; transparent: false; opacity: 1; side: double; depthWrite: true; depthTest: true"
