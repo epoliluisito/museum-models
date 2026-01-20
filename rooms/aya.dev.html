@@ -169,7 +169,6 @@ AFRAME.registerComponent('simple-ibl', {
 // This makes the tunnel read like it *pierces* through the dome (no starburst triangulation, no wall "ghosting").
 
 
-
 // Make the tunnel feel like a *lava-tube arch* instead of a clean cylinder.
 // feel like a *lava-tube arch* instead of a clean cylinder.
 // Assumes a cylinder primitive rotated 90 0 0 (so local Z becomes world Y).
@@ -276,8 +275,6 @@ AFRAME.registerComponent('tunnel-archify', {
 
         nor.needsUpdate = true;
       }
-
-
 
 
 // ===== Portal rim naturalization (irregular / organic) =====
@@ -439,7 +436,6 @@ AFRAME.registerComponent('organic-ring-edge', {
 });
 
 // ===== Aya Dome: bake watertight solid shell from the existing inner/outer sheets =====
-
 
 
 AFRAME.registerComponent('thick-dome-shell', {
@@ -1548,9 +1544,6 @@ AFRAME.registerComponent('cave-portal-cut', {
 });
 
 
-
-
-
 // Wait until the imported tunnel has been merge-aligned to the host anchor, then cut the dome portal.
 // This avoids the classic failure mode where the cut runs using the tunnel's pre-aligned transform (wrong location),
 // producing no opening (or cutting in the wrong place) and later leaving "dome leftovers" inside the tunnel.
@@ -1627,7 +1620,6 @@ AFRAME.registerComponent('portal-cut-wait', {
 });
 
 
-
 AFRAME.registerComponent('ground-undulate', {
   schema: {
     amp:         { type: 'number', default: 0.07 },   // meters
@@ -1640,6 +1632,7 @@ AFRAME.registerComponent('ground-undulate', {
 
   init: function () {
     this._applied = false;
+    this._inv = new THREE.Matrix4();
     this._apply = this._apply.bind(this);
     this.el.addEventListener('object3dset', this._apply);
     setTimeout(this._apply, 0);
@@ -1725,9 +1718,6 @@ AFRAME.registerComponent('ground-undulate', {
     this._applied = true;
   }
 });
-
-
-
 
 
 // Pulls the lowest edge of the cave shell down to meet the floor (world Y), with a smooth falloff upward.
@@ -2070,8 +2060,6 @@ AFRAME.registerComponent('ao-tune', {
 });
 
 
-
-
 AFRAME.registerComponent('collider-ring', {
   schema: {
     center:    { type: 'vec3',   default: {x:0,y:0,z:0} },
@@ -2081,8 +2069,15 @@ AFRAME.registerComponent('collider-ring', {
     height:    { type: 'number', default: 5.5 },
     thickness: { type: 'number', default: 1.0 },
     y:         { type: 'number', default: 2.4 },
+
+    // Back-compat single opening (deg range). Use openRanges for multiple openings.
     openStart: { type: 'number', default: -1 }, // degrees
     openEnd:   { type: 'number', default: -1 }, // degrees
+
+    // Multiple openings, comma-separated ranges like: "352-8,170-190".
+    // If provided, it overrides openStart/openEnd.
+    openRanges:{ type: 'string', default: '' },
+
     layers:    { type: 'int',    default: 2 },  // 2 staggered rings to eliminate gaps
     overlap:   { type: 'number', default: 1.45 } // segment depth multiplier
   },
@@ -2099,11 +2094,42 @@ AFRAME.registerComponent('collider-ring', {
     const avgR = (d.radiusX + d.radiusZ) * 0.5;
     const segLen = (2 * Math.PI * avgR / seg) * d.overlap;
 
+    const norm = (deg) => (deg % 360 + 360) % 360;
+
+    // Parse openRanges once per build.
+    const parsedRanges = [];
+    const rs = (d.openRanges || '').trim();
+    if (rs) {
+      for (const part of rs.split(',')) {
+        const p = part.trim();
+        if (!p) continue;
+        const mm = p.match(/^(-?\d+(?:\.\d+)?)\s*-\s*(-?\d+(?:\.\d+)?)$/);
+        if (!mm) continue;
+        parsedRanges.push({ s: norm(parseFloat(mm[1])), e: norm(parseFloat(mm[2])) });
+      }
+    }
+
     const inOpen = (deg) => {
+      const a = norm(deg);
+
+      // Multi-range override.
+      if (parsedRanges.length) {
+        for (let i = 0; i < parsedRanges.length; i++) {
+          const s = parsedRanges[i].s;
+          const e = parsedRanges[i].e;
+          if (s <= e) {
+            if (a >= s && a <= e) return true;
+          } else {
+            if (a >= s || a <= e) return true;
+          }
+        }
+        return false;
+      }
+
+      // Back-compat single range.
       if (d.openStart < 0 || d.openEnd < 0) return false;
-      const a = (deg % 360 + 360) % 360;
-      const s = (d.openStart % 360 + 360) % 360;
-      const e = (d.openEnd % 360 + 360) % 360;
+      const s = norm(d.openStart);
+      const e = norm(d.openEnd);
       if (s <= e) return (a >= s && a <= e);
       return (a >= s || a <= e);
     };
@@ -2141,8 +2167,6 @@ AFRAME.registerComponent('collider-ring', {
 });
 
 
-
-
 AFRAME.registerComponent('rig-walk', {
   schema: { speed: { type: 'number', default: 2.4 }, radius: { type: 'number', default: 0.28 } },
   init: function () {
@@ -2168,6 +2192,7 @@ AFRAME.registerComponent('rig-walk', {
 // When ESC releases pointer lock during the video, treat that as "exit video".
 // When seated-ready, treat pointer-lock release as "stand up" (ESC).
 this._onPointerLockChange = () => {
+  if (!this.state) return;
   if (this.state.autopilot) return;
   if (performance.now() < this._suppressPointerLockUntil) return;
 
@@ -2407,9 +2432,6 @@ AFRAME.registerComponent('initial-yaw', {
       
 
 
-
-
-
 // Ensure the scene can reliably receive keyboard input in embeds/browsers.
 AFRAME.registerComponent('auto-focus', {
   init: function () {
@@ -2594,6 +2616,7 @@ AFRAME.registerComponent('triplanar-diffuse', {
 
   init: function () {
     this._applied = false;
+    this._inv = new THREE.Matrix4();
     this._apply = this._apply.bind(this);
     this.el.addEventListener('object3dset', this._apply);
     this.el.addEventListener('model-loaded', this._apply);
@@ -2705,6 +2728,7 @@ AFRAME.registerComponent('disc-clip', {
   schema: { radius: { type: 'number', default: 1.0 } },
   init: function () {
     this._applied = false;
+    this._inv = new THREE.Matrix4();
     this._apply = this._apply.bind(this);
     this.el.addEventListener('object3dset', this._apply);
     setTimeout(this._apply, 0);
@@ -2754,8 +2778,6 @@ AFRAME.registerComponent('disc-clip', {
     this._applied = true;
   }
 });
-
-
 
 
 // Cut a cylindrical "pit" out of a mesh in world-space (so terrain can never occlude the liquid).
@@ -3159,14 +3181,6 @@ AFRAME.registerComponent('mercury-surface', {
 });
 
 
-
-
-
-
-
-
-
-
 // ===== Mercury surface (GPU, PBR-preserving) =====
 // Drops ALL per-frame CPU vertex deformation + normal recompute.
 // Instead, injects the original heightfield logic into MeshStandardMaterial's vertex shader
@@ -3471,6 +3485,7 @@ AFRAME.registerComponent('floor-seam-sculpt', {
 
   init: function () {
     this._applied = false;
+    this._inv = new THREE.Matrix4();
     this._apply = this._apply.bind(this);
     this.el.addEventListener('object3dset', this._apply);
     setTimeout(this._apply, 0);
@@ -3650,6 +3665,7 @@ AFRAME.registerComponent('floor-seam-sculpt-anchored', {
 
   init: function () {
     this._applied = false;
+    this._inv = new THREE.Matrix4();
     this._apply = this._apply.bind(this);
     this.el.addEventListener('object3dset', this._apply);
     setTimeout(this._apply, 0);
@@ -4221,7 +4237,6 @@ AFRAME.registerComponent('floor-rock-scatter', {
 });
 
 
-
 ;
 
 /* ===== moved inline scripts (pre-scene) ===== */
@@ -4292,6 +4307,7 @@ AFRAME.registerComponent('spherical-segment-clip', {
   },
   init: function () {
     this._applied = false;
+    this._inv = new THREE.Matrix4();
     this._onSet = (e) => {
       if (e.detail && e.detail.type === 'mesh') this.apply();
     };
@@ -4624,15 +4640,50 @@ AFRAME.registerComponent('broken-ring-glow', {
 });
 
 
-
 /**
  * planar-reflector — lightweight planar reflection component.
  * Provides dynamic reflections for the mercury pool when opening via file:// (no external deps).
  * Inspired by three.js Reflector (MIT), adapted to A-Frame.
  */
+
+
+// reflect-layer
+// Assign an entity (and its meshes) to a Three.js render layer.
+// - Default keeps layer 0 enabled (object remains visible to the main camera)
+// - Set `exclusive: true` to make it ONLY visible on that layer
+AFRAME.registerComponent('reflect-layer', {
+  schema: {
+    layer: { type: 'int', default: 1 },
+    exclusive: { type: 'boolean', default: false }
+  },
+
+  init: function () {
+    this._apply = this._apply.bind(this);
+    this.el.addEventListener('object3dset', this._apply);
+    this._apply();
+  },
+
+  remove: function () {
+    this.el.removeEventListener('object3dset', this._apply);
+  },
+
+  _apply: function () {
+    const root = this.el.getObject3D('mesh');
+    if (!root) return;
+    const layer = this.data.layer | 0;
+    const exclusive = !!this.data.exclusive;
+    root.traverse((o) => {
+      if (!o.layers) return;
+      if (exclusive) o.layers.set(layer);
+      else o.layers.enable(layer);
+    });
+  }
+});
 AFRAME.registerComponent('planar-reflector', {
   schema: {
     resolution: {type: 'int', default: 1024},
+    // If >= 0, render ONLY this layer into the reflection (big perf win).
+    reflectLayer: {type: 'int', default: -1},
     color: {type: 'color', default: '#20242b'},
     opacity: {type: 'number', default: 0.34},
     clipBias: {type: 'number', default: 0.003},
@@ -4643,6 +4694,8 @@ AFRAME.registerComponent('planar-reflector', {
     forceAngDelta: {type: 'number', default: 0.02},
     // Optional perf gating: skip reflection if the camera is far away.
     maxDistance: {type: 'number', default: 999},
+    // Optional perf gating: clamp reflection camera far plane (culls distant draw in reflection).
+    maxFar: {type: 'number', default: 120},
     // Optional perf gating: pause reflection when a UI overlay is visible.
     pauseWhenOverlay: {type: 'boolean', default: false},
     overlayId: {type: 'string', default: 'ayaFullscreenOverlay'},
@@ -4693,7 +4746,7 @@ AFRAME.registerComponent('planar-reflector', {
       minFilter: THREE.LinearFilter,
       magFilter: THREE.LinearFilter,
       format: THREE.RGBAFormat,
-      depthBuffer: true,
+      depthBuffer: false,
       stencilBuffer: false
     });
     rt.texture.generateMipmaps = false;
@@ -4832,7 +4885,7 @@ AFRAME.registerComponent('planar-reflector', {
       this.virtualCamera.lookAt(target);
 
       this.virtualCamera.near = camera.near;
-      this.virtualCamera.far = camera.far;
+      this.virtualCamera.far = Math.min(camera.far, (this.data.maxFar || camera.far));
       this.virtualCamera.aspect = camera.aspect;
       this.virtualCamera.projectionMatrix.copy(camera.projectionMatrix);
       this.virtualCamera.updateMatrixWorld();
@@ -4876,6 +4929,14 @@ AFRAME.registerComponent('planar-reflector', {
       renderer.xr.enabled = false;
       renderer.shadowMap.enabled = false;
 
+      // Layer selection: optionally render only a curated layer into the reflection.
+      if (this.data.reflectLayer >= 0) {
+        this.virtualCamera.layers.set(this.data.reflectLayer);
+      } else {
+        // Match the main camera layers by default.
+        this.virtualCamera.layers.mask = camera.layers.mask;
+      }
+
       this.mesh.visible = false;
       renderer.setRenderTarget(this.renderTarget);
       renderer.clear();
@@ -4894,9 +4955,6 @@ AFRAME.registerComponent('planar-reflector', {
     };
   }
 });
-
-
-
 
 
 /* -------------------------------------------------------------------------
@@ -4983,7 +5041,7 @@ AFRAME.registerComponent('spin', {
     const qBeam   = this._tmpImpactQB     || (this._tmpImpactQB     = new THREE.Quaternion());
     const normalW = this._tmpImpactN      || (this._tmpImpactN      = new THREE.Vector3());
 
-    const maxD = this.data.lightReach || 60;
+    const maxD = this.data.impactReach || this.data.lightReach || 60;
 
     for (let i = 0; i < this._beams.length; i++) {
       const b = this._beams[i];
@@ -5197,11 +5255,12 @@ AFRAME.registerComponent('perforated-sphere-light', {
     lightCount:  {type: 'int',    default: 10},   // max spotlights
     lightAngle:  {type: 'number', default: 0.12}, // radians (small to avoid giant wall blobs)
     lightReach:  {type: 'number', default: 62}    ,
+    impactReach: {type: 'number', default: 62},
 
     // Impact dots (a soft projected hotspot where beams hit geometry)
     impactDots: {type: 'boolean', default: true},
     impactSize: {type: 'number',  default: 0.65},
-    impactOpacity: {type: 'number', default: 0.22},
+    impactOpacity: {type: 'number', default: 0.28},
     impactEveryMs: {type: 'number', default: 90},
 // distance
   },
@@ -5253,6 +5312,11 @@ AFRAME.registerComponent('perforated-sphere-light', {
     this._coreLightEl = this.el.querySelector('#sphere_core_light');
     this._coreFlameEl = this.el.querySelector('#sphere_core_flame');
 
+    // Raycaster used to cap beam lengths against the room geometry (so beams reach the walls).
+    this._lenRay = new THREE.Raycaster();
+    this._lenTargets = null;
+    this._capsDone = false;
+
     // Textures
     this._beamTex = this._makeBeamTexture();
     this._exitTex = this._makeExitTexture();
@@ -5288,6 +5352,9 @@ AFRAME.registerComponent('perforated-sphere-light', {
       this._applyPerforationTextures(obj);
       this._buildBeams();
       this._buildSpots();
+
+      // Compute per-beam room-capped lengths once the scene has meshes (delayed a tick).
+      setTimeout(() => { this._computeBeamCaps && this._computeBeamCaps(); }, 0);
     };
 
     if (this._shellEl) {
@@ -5430,24 +5497,68 @@ AFRAME.registerComponent('perforated-sphere-light', {
 
 
   _makeSpotCookie: function () {
-    // Small, tight cookie so the “beam hit” feels like a focused spill, not a huge circle.
-    const S = 128;
+    // Speckled cookie so wall/floor hits read like a tiny, scattered night-sky pattern (not big blobs).
+    // Kept small + mipmap-free to avoid shimmering/popping.
+    const S = 256;
     const c = document.createElement('canvas');
     c.width = c.height = S;
     const g = c.getContext('2d');
 
-    g.clearRect(0, 0, S, S);
-    const grd = g.createRadialGradient(S/2, S/2, 0, S/2, S/2, S/2);
-    grd.addColorStop(0.00, 'rgba(255,255,255,1.0)');
-    grd.addColorStop(0.18, 'rgba(255,255,255,0.85)');
-    grd.addColorStop(0.40, 'rgba(255,255,255,0.35)');
-    grd.addColorStop(1.00, 'rgba(0,0,0,0.0)');
-    g.fillStyle = grd;
+    const cx = S / 2, cy = S / 2;
+
+    // Base: black.
+    g.fillStyle = 'rgba(0,0,0,1)';
     g.fillRect(0, 0, S, S);
 
+    // Dot field (biased toward center).
+    const dotCount = 160;
+    for (let i = 0; i < dotCount; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const rr = Math.pow(Math.random(), 1.65) * (S * 0.48);
+      const x = cx + Math.cos(a) * rr;
+      const y = cy + Math.sin(a) * rr;
+      const r = 0.55 + Math.random() * 1.75; // px
+      const op = 0.25 + Math.random() * 0.75;
+      g.fillStyle = `rgba(255,255,255,${op.toFixed(3)})`;
+      g.beginPath();
+      g.arc(x, y, r, 0, Math.PI * 2);
+      g.fill();
+    }
+
+    // A handful of slightly larger "hero" specks.
+    const heroCount = 18;
+    for (let i = 0; i < heroCount; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const rr = Math.pow(Math.random(), 1.35) * (S * 0.38);
+      const x = cx + Math.cos(a) * rr;
+      const y = cy + Math.sin(a) * rr;
+      const r = 2.2 + Math.random() * 3.2;
+      const grd = g.createRadialGradient(x, y, 0, x, y, r);
+      grd.addColorStop(0.0, 'rgba(255,255,255,0.95)');
+      grd.addColorStop(0.35,'rgba(255,255,255,0.55)');
+      grd.addColorStop(1.0, 'rgba(0,0,0,0.0)');
+      g.fillStyle = grd;
+      g.beginPath();
+      g.arc(x, y, r, 0, Math.PI * 2);
+      g.fill();
+    }
+
+    // Soft circular mask so the projection stays contained.
+    g.globalCompositeOperation = 'destination-in';
+    const mask = g.createRadialGradient(cx, cy, S * 0.05, cx, cy, S * 0.50);
+    mask.addColorStop(0.00, 'rgba(255,255,255,1.0)');
+    mask.addColorStop(0.78, 'rgba(255,255,255,1.0)');
+    mask.addColorStop(1.00, 'rgba(255,255,255,0.0)');
+    g.fillStyle = mask;
+    g.fillRect(0, 0, S, S);
+    g.globalCompositeOperation = 'source-over';
+
     const tex = new THREE.CanvasTexture(c);
-    tex.minFilter = THREE.LinearMipMapLinearFilter;
+    tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.generateMipmaps = false;
+    tex.minFilter = THREE.LinearFilter;
     tex.magFilter = THREE.LinearFilter;
+    tex.anisotropy = 2;
     return tex;
   },
   _applyPerforationTextures: function (rootObj) {
@@ -5578,9 +5689,9 @@ _buildBeams: function () {
 
   // Make the beam truly feel like it is *collimated by a tiny hole*:
   // very tight at the emitter, then blooming outward.
-  const geoOuter = this._makeTaperPlane(br * 1.25,  br * 12.0); // tiny at hole → wider
-  const geoInner = this._makeTaperPlane(br * 22.0,  br * 1.25); // wider in core → tiny at hole
-  const geoThroat = this._makeTaperPlane(br * 1.6,  br * 5.5); // bright short throat right at the perforation
+  const geoOuter  = this._makeTaperPlane(br * 8.0,  br * 8.0);  // straight shaft (no cone taper)
+  const geoInner  = this._makeTaperPlane(br * 8.0,  br * 8.0);  // straight inner spill (no cone taper)
+  const geoThroat = this._makeTaperPlane(br * 10.0, br * 10.0); // slightly thicker throat, still straight
 
   this._beams.length = 0;
 
@@ -5635,6 +5746,7 @@ _buildBeams: function () {
     const in2 = new THREE.Mesh(geoInner, innerMat);
     in2.rotation.y = Math.PI / 2;
     innerG.add(in1); innerG.add(in2);
+    innerG.visible = false; // inward spill disabled for clean emitter read
 
     // Outer segment (outside sphere): the visible shaft (positive Y).
     const outerG = new THREE.Group();
@@ -5661,43 +5773,77 @@ _buildBeams: function () {
     const th1 = new THREE.Mesh(geoThroat, throatMat);
     const th2 = new THREE.Mesh(geoThroat, throatMat);
     th2.rotation.y = Math.PI / 2;
+    th1.renderOrder = 60;
+    th2.renderOrder = 60;
     throatG.add(th1); throatG.add(th2);
 
-    // Exit sparkle lives exactly at the hole (the emitter).
-    const sprMat = new THREE.SpriteMaterial({
-      map: this._exitTex,
+    // Emitter visuals (NOT billboards): a thin rim ring + tiny exit disc, oriented to the hole normal.
+    // Using meshes (not sprites) avoids the "floating emissive dots" artifact and respects wall occlusion.
+    const ringGeo = new THREE.RingGeometry(0.010, 0.020, 24);
+    const ringMat = new THREE.MeshBasicMaterial({
       color: this._cWhite.clone(),
-      transparent: true,
-      opacity: 0.0,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      depthTest: true
-    });
-    const exit = new THREE.Sprite(sprMat);
-    // Keep the vent sparkle very small so it reads as a *pin-hole* emitter.
-    exit.scale.set(0.016, 0.016, 0.016);
-    exit.position.set(0, 0.002, 0); // tiny nudge outward to avoid z-fighting
-
-    // Rim ring glow is a per-beam sprite so it is guaranteed to match a beam (no texture-only dots).
-    const ringMat = new THREE.SpriteMaterial({
       map: this._ringTex,
-      color: this._cWhite.clone(),
+      alphaMap: this._ringTex,
       transparent: true,
       opacity: 0.0,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
-      depthTest: true
+      depthTest: true,
+      side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2
     });
-    const ring = new THREE.Sprite(ringMat);
-    ring.scale.set(0.050, 0.050, 0.050);
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.renderOrder = 61;
+    ring.rotation.x = -Math.PI / 2; // lie in XZ plane (normal +Y)
     ring.position.set(0, 0.0016, 0);
 
+    const exitGeo = new THREE.CircleGeometry(br * 3.2, 18);
+    const holeGeo = new THREE.CircleGeometry(br * 2.8, 18);
+    const exitMat = new THREE.MeshBasicMaterial({
+      color: this._cWhite.clone(),
+      map: this._exitTex,
+      alphaMap: this._exitTex,
+      transparent: true,
+      opacity: 0.0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      depthTest: true,
+      side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -3,
+      polygonOffsetUnits: -3
+    });
+    const exit = new THREE.Mesh(exitGeo, exitMat);
+    exit.renderOrder = 62;
+    exit.rotation.x = -Math.PI / 2;
+    exit.position.set(0, 0.0020, 0);
+
+
+    const holeMat = new THREE.MeshBasicMaterial({
+      color: 0x000000,
+      transparent: true,
+      opacity: 0.0,
+      depthWrite: false,
+      depthTest: true,
+      side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -4,
+      polygonOffsetUnits: -4
+    });
+    const hole = new THREE.Mesh(holeGeo, holeMat);
+    hole.renderOrder = 60;
+    hole.rotation.x = -Math.PI / 2;
+    // Sit just *inside* the shell so it reads as a real perforation, not a sticker.
+    hole.position.set(0, -0.0009, 0);
     const cards = new THREE.Group();
     cards.add(innerG);
     cards.add(outerG);
     cards.add(throatG);
 
     g.add(cards);
+    g.add(hole);
     g.add(ring);
     g.add(exit);
 
@@ -5712,7 +5858,9 @@ _buildBeams: function () {
       outerMat,
       throatMat,
       exit,
-      exitMat: sprMat,
+      exitMat: exitMat,
+      hole,
+      holeMat: holeMat,
       ring,
       ringMat,
       dir: dir.clone(),
@@ -5726,7 +5874,8 @@ _buildBeams: function () {
 },
 
 _buildSpots: function () {
-  // Create a small number of real spotlights that are physically attached to selected holes,
+    if (this.data.lightCount <= 0) return;
+// Create a small number of real spotlights that are physically attached to selected holes,
   // so the cave lighting is *literally* emitted from the same places as the beams.
   const n = this._beams.length;
   if (!n) return;
@@ -5741,7 +5890,6 @@ _buildSpots: function () {
 
     const spot = new THREE.SpotLight(this._cBlue.clone(), 0.0, this.data.lightReach, this.data.lightAngle, 0.78, 2);
     spot.castShadow = false;
-    spot.map = this._spotCookie; // cookie (ignored safely if unsupported)
 
     // Position just outside the hole, pointing outward.
     spot.position.set(0, 0.06, 0);
@@ -5760,8 +5908,75 @@ _buildSpots: function () {
   }
 },
 
+
+  _buildRaycastTargets: function () {
+    const root = this.el.sceneEl && this.el.sceneEl.object3D;
+    if (!root) return [];
+    const selfRoot = this.el.object3D;
+    const meshes = [];
+    root.traverse((o) => {
+      if (!o || !o.isMesh) return;
+      // Exclude anything under this component's entity (sphere shell + beams).
+      if (selfRoot) {
+        let p = o;
+        while (p) { if (p === selfRoot) return; p = p.parent; }
+      }
+      if (o.visible === false) return;
+      meshes.push(o);
+    });
+    return meshes;
+  },
+  _computeBeamCaps: function () {
+    if (this._capsDone) return;
+    if (!this._built || !this._beams || this._beams.length === 0) return;
+    if (!this.el || !this.el.sceneEl) return;
+
+    // Build / cache raycast targets (exclude anything under this component's entity).
+    if (!this._lenTargets || this._lenTargets.length === 0) {
+      this._lenTargets = this._buildRaycastTargets();
+    }
+    const targets = this._lenTargets;
+    if (!targets || targets.length === 0) {
+      // Try again next frame (scene may still be attaching meshes).
+      return;
+    }
+
+    const origin = this._tmpCapO || (this._tmpCapO = new THREE.Vector3());
+    const dirW   = this._tmpCapD || (this._tmpCapD = new THREE.Vector3());
+    const qW     = this._tmpCapQ || (this._tmpCapQ = new THREE.Quaternion());
+
+    const FAR = 240;
+
+    for (let i = 0; i < this._beams.length; i++) {
+      const b = this._beams[i];
+      if (!b || !b.obj) continue;
+
+      b.obj.getWorldPosition(origin);
+      b.obj.getWorldQuaternion(qW);
+      dirW.set(0, 1, 0).applyQuaternion(qW).normalize();
+
+      // Push a bit outward so we don't immediately hit nearby geometry.
+      origin.addScaledVector(dirW, 0.10);
+
+      this._lenRay.set(origin, dirW);
+      this._lenRay.far = FAR;
+      const hits = this._lenRay.intersectObjects(targets, true);
+      if (hits && hits.length) {
+        // Cap length to the first hit distance (minus a small epsilon).
+        b.capLen = Math.max(2.0, hits[0].distance - 0.25);
+      } else {
+        b.capLen = this.data.beamMax;
+      }
+    }
+
+    this._capsDone = true;
+  },
+
+
   tick: function (time) {
   if (!this._built) return;
+  // If the room geometry wasn't ready at init, keep trying until we can cap beam lengths.
+  if (!this._capsDone) this._computeBeamCaps && this._computeBeamCaps();
   const t = (time || 0) / 1000;
 
   // Slow “breath” for the internal flame.
@@ -5865,15 +6080,36 @@ _buildSpots: function () {
       }
     }
 
+    // Directional motion: keep the emitter (ring/exit/hole) locked to the shell normal,
+    // but let the shaft "hunt" subtly in a small cone for beauty + to avoid dead-straight repetition.
+    if (b.cards) {
+      const wobAmt = wob * (0.35 + 0.65 * w) * (0.65 + 0.35 * coreN);
+      const ax = wobAmt * (0.70 * Math.sin(t * (0.55 + 0.25 * b.rand) + b.phase) +
+                           0.30 * Math.sin(t * (0.93 + 0.41 * b.rand) + b.phase * 1.7));
+      const az = wobAmt * (0.70 * Math.cos(t * (0.48 + 0.21 * b.rand) + b.phase * 0.9) +
+                           0.30 * Math.sin(t * (0.81 + 0.33 * b.rand) + b.phase * 2.3));
+      b.cards.rotation.x = ax;
+      b.cards.rotation.z = az;
+      b._yawWob = wobAmt * 0.45 * Math.sin(t * (0.32 + 0.17 * b.rand) + b.phase * 0.6);
+    } else {
+      b._yawWob = 0;
+    }
 
-    const outerLen = THREE.MathUtils.lerp(this.data.beamMin, this.data.beamMax, w) * (0.92 + 0.22 * b.rand);
+
+    const cap = (b.capLen && isFinite(b.capLen)) ? b.capLen : this.data.beamMax;
+
+    // Keep a strong minimum so rays read as room-filling even at lower intensities.
+    const minLen = Math.min(cap, Math.max(this.data.beamMin, cap * 0.45));
+    const outerLen = THREE.MathUtils.lerp(minLen, cap, w) * (0.98 + 0.04 * b.rand);
 
     // Inner spill length: longer when stronger, always inside.
     const innerLen = Math.max(0.35, this.data.radius * this.data.innerFrac * (0.85 + 0.95 * w));
 
     // Opacity
-    const opOuter = (this.data.baseOpacity * intensityV * 1.75 * w * viewGate) * 2.00;
-    const opInner = (this.data.baseOpacity * intensityV * this.data.spillBoost * 0.70 * w * viewGate) * 2.00;
+    const opOuter = (this.data.baseOpacity * intensityV * 1.75 * w) * 4.00;
+    const opInnerRaw = (this.data.baseOpacity * intensityV * this.data.spillBoost * 0.70 * w) * 4.00;
+    // Disable inward spill so beams don't read as a center-burst from frontal views.
+    const opInner = 0.0;
 
     b.outerMat.opacity = opOuter;
     b.innerMat.opacity = opInner;
@@ -5894,11 +6130,11 @@ _buildSpots: function () {
     // Throat: a short, brighter segment right at the perforation so the beam reads as starting at the hole.
     if (b.throatObj) {
       const throatLen = 0.22 + 0.55 * w; // meters-ish
-      const thickThroat = thickOuter * 1.9;
+      const thickThroat = thickOuter * 1.35;
       b.throatObj.scale.set(thickThroat, throatLen, thickThroat);
       b.throatObj.position.set(0, throatLen * 0.5 + 0.004, 0); // tiny push outward to avoid depth clipping
       if (b.throatMat) {
-        b.throatMat.opacity = THREE.MathUtils.clamp(opOuter * 3.2, 0.0, 0.88);
+        b.throatMat.opacity = THREE.MathUtils.clamp(opOuter * 3.2, 0.0, 0.88) * (0.55 + 0.45 * viewGate);
         b.throatMat.color.copy(this._cWhite).lerp(this._cBlue, 0.20);
       }
     }
@@ -5909,30 +6145,52 @@ _buildSpots: function () {
 
     // Exit sparkle: tiny bright vent.
     const spark = THREE.MathUtils.smoothstep(w, 0.12, 0.30);
-    // Keep the exit sparkle matched to the hole scale.
-    const ex = 0.020 + 0.055 * w;
 
-    // Projected-size gate: if the sprite is sub-pixel, it will shimmer/popup as a '+' when additive.
-    // Hide it entirely below a small screen threshold.
-    let exGate = 1.0;
+    // Screen-space sizing: keep the emitter readable even when we look along the beam axis.
+    // Instead of fading to 0 (which reads like "beams not from holes"), we keep a small minimum pixel size
+    // and clamp it to avoid the subpixel additive shimmer that used to look like a '+'.
+    let dist = 6.0;
     if (cam && this._tanHalfFov && this._vpH) {
-      // Distance from camera to beam origin (close enough for the emitter).
       b.obj.getWorldPosition(this._tmpV1);
-      const dist = this._camPos.distanceTo(this._tmpV1);
-      const pix = (dist > 1e-3) ? (ex / dist) * (this._vpH / (2.0 * this._tanHalfFov)) : 999.0;
-      exGate = THREE.MathUtils.smoothstep(pix, 1.2, 2.2); // 0 below ~1.2px, 1 above ~2.2px
+      dist = this._camPos.distanceTo(this._tmpV1);
     }
 
-    b.exitMat.opacity = THREE.MathUtils.clamp(1.25 * w * w * w, 0.0, 1.0) * (0.35 + 0.65 * intensityV) * spark * viewGate * exGate;
+    // Target pixel sizes (clamped). Slightly larger when beam is stronger.
+    const pixBase = 2.8;
+    const pixGain = 3.8; // -> up to ~6.6px
+    const pixExit = THREE.MathUtils.clamp(pixBase + pixGain * w, 2.8, 6.8);
+
+    // Convert pixels to world units at this distance.
+    let ex = 0.020 + 0.055 * w;
+    if (cam && this._tanHalfFov && this._vpH && dist > 1e-3) {
+      ex = (pixExit * dist) * (2.0 * this._tanHalfFov / this._vpH);
+    }
+
+    b.exitMat.opacity = THREE.MathUtils.clamp(1.10 * w * w * w, 0.0, 1.0)
+      * (0.35 + 0.65 * intensityV) * spark;
     b.exit.visible = (b.exitMat.opacity > 0.002);
     b.exit.scale.set(ex, ex, ex);
 
-    // Rim ring glow: tied to the same beam intensity (so no ring without a beam).
+
+    // Physical perforation: a dark "hole" disk just inside the shell, always tied to beam intensity.
+    if (b.holeMat && b.hole) {
+      b.holeMat.opacity = THREE.MathUtils.clamp(0.90 * (0.25 + 0.75 * w) * viewGate, 0.0, 0.95);
+      b.hole.visible = (b.holeMat.opacity > 0.01);
+      const hx = ex * 1.18;
+      b.hole.scale.set(hx, hx, hx);
+    }
+
+    // Rim ring glow: always tied to the same beam intensity (so no ring without a beam).
     if (b.ringMat && b.ring) {
-      b.ringMat.opacity = THREE.MathUtils.clamp(1.05 * w * w * w, 0.0, 1.0) * (0.30 + 0.70 * intensityV) * spark * viewGate;
-      b.ringMat.opacity *= exGate;
+      const pixRing = THREE.MathUtils.clamp(pixExit * 2.1, 6.0, 16.0);
+      let rs = 0.040 + 0.090 * w;
+      if (cam && this._tanHalfFov && this._vpH && dist > 1e-3) {
+        rs = (pixRing * dist) * (2.0 * this._tanHalfFov / this._vpH);
+      }
+
+      b.ringMat.opacity = THREE.MathUtils.clamp(0.95 * w * w * w, 0.0, 1.0)
+        * (0.30 + 0.70 * intensityV) * spark;
       b.ring.visible = (b.ringMat.opacity > 0.002);
-      const rs = 0.040 + 0.090 * w;
       b.ring.scale.set(rs, rs, rs);
     }
 
@@ -5941,7 +6199,7 @@ _buildSpots: function () {
       let perp = new THREE.Vector3().crossVectors(b.dir, this._up);
       if (perp.lengthSq() < 1e-4) perp = new THREE.Vector3(1, 0, 0);
       perp.normalize();
-      const ang = wob * Math.sin(t * 0.10 + b.phase);
+      const ang = wob * Math.sin(t * 0.22 + b.phase);
       const q = new THREE.Quaternion().setFromAxisAngle(perp, ang);
       b.obj.quaternion.copy(b.baseQuat).multiply(q);
     } else {
@@ -5962,15 +6220,7 @@ _buildSpots: function () {
         if (this._tmpV3.lengthSq() > 1e-6) {
           this._tmpV3.normalize();
           const ang = Math.atan2(this._tmpV3.x, this._tmpV3.z);
-          b.cards.rotation.y = ang;
-
-      // If we're looking almost exactly along the beam direction, cards can collapse into a '+' at the emitter.
-      // Fade them out in that narrow case (the volumetric feel is preserved by other beams).
-      const beamDirW = new THREE.Vector3(0, 1, 0).applyQuaternion(this._tmpQ1).normalize();
-      const viewDirW = this._tmpV2; // already normalized (camPos - beamPos)
-      const along = Math.abs(beamDirW.dot(viewDirW));
-      if (along > 0.985) b.cards.visible = false;
-      else if (w > 0.0) b.cards.visible = true;
+          b.cards.rotation.y = ang + (b._yawWob || 0);
         }
       }
     }
@@ -5979,7 +6229,7 @@ _buildSpots: function () {
     if (b.spot) {
       const roomI = intensity * intensity;
       // Stronger, more realistic spill in the room, still driven by the same hole intensity.
-      b.spot.intensity = (0.80 + 14.0 * roomI) * 2.00;
+      b.spot.intensity = (0.80 + 14.0 * roomI) * 8.00;
       b.spot.color.copy(this._cBlue).lerp(this._cWhite, 0.35 * w);
     }
   }
@@ -6216,6 +6466,366 @@ AFRAME.registerComponent('sphere-hole-beams', {
     // deterministic pseudo-random in [0..1)
     const s = Math.sin(x * 127.1) * 43758.5453123;
     return this._fract(s);
+  }
+});
+
+
+// ===== Forest-of-Lights beam (cheap faux-volumetric) =====
+// Two crossed frustum-planes with an additive, fog-aware beam texture.
+// This reads like haze catching light, without real volumetric lighting.
+
+// ===== Forest-of-Lights beam + haze particles (cheap faux-volumetric) =====
+// Goal: cones of light that feel like spotlights made visible by moving haze (not solid objects).
+// Implementation:
+// - A very faint frustum mesh (additive) for a stable silhouette.
+// - A small particle volume (THREE.Points) drifting/jittering inside the frustum.
+// Performance:
+// - No shadows
+// - Shared textures/material settings
+// - ~300-500 points per cone (default 420)
+AFRAME.registerComponent('fol-beam', {
+  schema: {
+    height:       { type: 'number', default: 7.0 },
+    radiusTop:    { type: 'number', default: 0.04 },
+    radiusBottom: { type: 'number', default: 0.28 },
+    color:        { type: 'color',  default: '#bfe8ff' },
+
+    // Base (very faint) cone silhouette
+    opacity:      { type: 'number', default: 0.12 },
+    solidFactor:  { type: 'number', default: 0.25 },
+
+    // Haze particles are disabled (we keep the cone as faint haze volume).
+    // (User requested: remove particles.)
+    particles:    { type: 'int',    default: 0 },
+    pSize:        { type: 'number', default: 0.022 },
+    drift:        { type: 'number', default: 0.22 },
+    jitter:       { type: 'number', default: 0.14 },
+    flutter:      { type: 'number', default: 0.28 }
+  },
+
+  init: function () {
+    this._group = new THREE.Group();
+    this.el.object3D.add(this._group);
+
+    // Stable per-instance seed (so cones don't animate in sync).
+    const a = this.el.getAttribute('fol-cone-anim');
+    this._seed = (a && typeof a.seed === 'number') ? a.seed : (Math.random() * 1000.0);
+
+    this._coneTex = this._getSharedConeTex();
+    this._dotTex  = this._getSharedDotTex();
+
+    this._coneMesh = null;
+    this._coneMat  = null;
+
+    this._pts = null;
+    this._ptsGeo = null;
+    this._ptsMat = null;
+
+    this._vel = null;
+    this._phase = null;
+
+    this._lastH = this._lastRT = this._lastRB = -1;
+    this._tPrev = 0;
+
+    this._rebuild(true);
+  },
+
+  update: function () {
+    this._rebuild(false);
+  },
+
+  remove: function () {
+    if (this._coneMesh && this._coneMesh.geometry) this._coneMesh.geometry.dispose();
+    if (this._coneMat) this._coneMat.dispose();
+
+    if (this._ptsGeo) this._ptsGeo.dispose();
+    if (this._ptsMat) this._ptsMat.dispose();
+
+    this.el.object3D.remove(this._group);
+  },
+
+  tick: function (timeMs) {
+    // Subtle, non-directional “density” movement so the beam feels less solid.
+    // Avoids any visible vertical sliding.
+    const d = this.data;
+    const t = (timeMs || 0) * 0.001;
+    if (this._coneMat) {
+      const w1 = 0.5 + 0.5 * Math.sin(t * 0.72 + this._seed * 1.17);
+      const w2 = 0.5 + 0.5 * Math.sin(t * 1.03 + this._seed * 2.63);
+      const w = 0.65 * w1 + 0.35 * w2;
+      const base = d.opacity * d.solidFactor;
+      this._coneMat.opacity = base * (0.70 + 0.40 * w);
+    }
+
+    // No particles: done.
+    if (!this._ptsGeo) return;
+
+    // (Legacy particle code below; kept but inactive when particles=0)
+    const dt = Math.min(0.033, Math.max(0.0, (this._tPrev ? (t - this._tPrev) : 0.016)));
+    this._tPrev = t;
+
+    const h = Math.max(0.1, d.height);
+    const half = h * 0.5;
+    const rt = Math.max(0.001, d.radiusTop);
+    const rb = Math.max(rt + 0.001, d.radiusBottom);
+
+    const posAttr = this._ptsGeo.getAttribute('position');
+    const p = posAttr.array;
+
+    // DOWNWARD drift (toward floor). The beam entity is positioned so its top
+    // aligns with the lamp (see markup: beam positioned to match y=5.40).
+    const down = Math.max(0.0, d.drift);
+
+    for (let i = 0; i < this._pCount; i++) {
+      const ix = i * 3;
+      let x = p[ix + 0];
+      let y = p[ix + 1];
+      let z = p[ix + 2];
+
+      // Normalized height 0..1 where 0 = top, 1 = bottom.
+      const yn = (y + half) / h;
+      const rHere = rt + (rb - rt) * yn;
+
+      // Small swirling turbulence (stable, non-sliding).
+      const ph = this._phase[i] + t * 0.9;
+      const sx = Math.sin(ph * 1.37) * 0.6 + Math.sin(ph * 2.11) * 0.4;
+      const sz = Math.cos(ph * 1.19) * 0.6 + Math.cos(ph * 2.07) * 0.4;
+
+      // Integrate.
+      x += (this._vel[ix + 0] + sx * d.jitter) * dt;
+      z += (this._vel[ix + 2] + sz * d.jitter) * dt;
+      y += (this._vel[ix + 1] - down) * dt;
+
+      // Keep inside cone cross-section.
+      const rr = x * x + z * z;
+      const rMax = rHere;
+      if (rr > rMax * rMax) {
+        const r = Math.sqrt(rr) || 1.0;
+        const k = (rMax / r) * 0.98;
+        x *= k;
+        z *= k;
+      }
+
+      // Respawn when exiting bottom: place near the top (close to lamp).
+      if (y < -half) {
+        // Slightly below the very top so we don't form a razor-thin column.
+        y = half - (Math.random() * 0.25);
+
+        const yn2 = (y + half) / h;
+        const r2 = rt + (rb - rt) * yn2;
+        const ang = Math.random() * Math.PI * 2.0;
+        const rad = Math.sqrt(Math.random()) * r2;
+        x = Math.cos(ang) * rad;
+        z = Math.sin(ang) * rad;
+
+        // New micro-vel + phase.
+        this._vel[ix + 0] = (Math.random() - 0.5) * 0.06;
+        this._vel[ix + 1] = (Math.random() - 0.5) * 0.02;
+        this._vel[ix + 2] = (Math.random() - 0.5) * 0.06;
+        this._phase[i] = (Math.random() * 1000.0) + this._seed;
+      }
+
+      p[ix + 0] = x;
+      p[ix + 1] = y;
+      p[ix + 2] = z;
+    }
+
+    posAttr.needsUpdate = true;
+
+    // Subtle breathing on particle opacity (feels like density fluctuation).
+    if (this._ptsMat) {
+      const w = 0.5 + 0.5 * Math.sin(t * 0.55 + this._seed * 1.37);
+      this._ptsMat.opacity = 0.18 + (d.flutter * 0.22) * w;
+    }
+  },
+
+  _getSharedConeTex: function () {
+    const key = '__FOL_CONE_TEX_V2';
+    if (window[key]) return window[key];
+
+    const w = 64;
+    const h = 256;
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d');
+
+    const img = ctx.createImageData(w, h);
+    const data = img.data;
+
+    const clamp01 = (v) => Math.max(0, Math.min(1, v));
+
+    for (let y = 0; y < h; y++) {
+      const v = y / (h - 1);
+      // Stronger near top, softer near bottom.
+      const fall = Math.pow(1.0 - v, 1.35);
+      for (let x = 0; x < w; x++) {
+        const u = x / (w - 1);
+        const du = Math.abs(u - 0.5) / 0.5;
+        const edge = Math.exp(-(du * du) * 2.2);
+        let a = edge * (0.18 + 0.62 * fall);
+        a = clamp01(a);
+        const i = (y * w + x) * 4;
+        data[i + 0] = 255;
+        data[i + 1] = 255;
+        data[i + 2] = 255;
+        data[i + 3] = Math.floor(a * 255);
+      }
+    }
+
+    ctx.putImageData(img, 0, 0);
+
+    const tex = new THREE.CanvasTexture(c);
+    tex.wrapS = THREE.ClampToEdgeWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false;
+
+    window[key] = tex;
+    return tex;
+  },
+
+  _getSharedDotTex: function () {
+    const key = '__FOL_DOT_TEX_V2';
+    if (window[key]) return window[key];
+
+    const s = 64;
+    const c = document.createElement('canvas');
+    c.width = s; c.height = s;
+    const ctx = c.getContext('2d');
+
+    const g = ctx.createRadialGradient(s * 0.5, s * 0.5, 0, s * 0.5, s * 0.5, s * 0.5);
+    g.addColorStop(0.00, 'rgba(255,255,255,0.70)');
+    g.addColorStop(0.22, 'rgba(255,255,255,0.22)');
+    g.addColorStop(0.60, 'rgba(255,255,255,0.06)');
+    g.addColorStop(1.00, 'rgba(255,255,255,0.00)');
+
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, s, s);
+
+    const tex = new THREE.CanvasTexture(c);
+    tex.wrapS = THREE.ClampToEdgeWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.generateMipmaps = false;
+
+    window[key] = tex;
+    return tex;
+  },
+
+  _rebuild: function (forceGeo) {
+    const d = this.data;
+
+    const rt = Math.max(0.001, d.radiusTop);
+    const rb = Math.max(rt + 0.001, d.radiusBottom);
+    const h  = Math.max(0.1, d.height);
+
+    const needsGeo = forceGeo || !this._coneMesh ||
+      this._lastRT !== rt || this._lastRB !== rb || this._lastH !== h;
+
+    if (needsGeo) {
+      if (this._coneMesh && this._coneMesh.geometry) this._coneMesh.geometry.dispose();
+
+      const geo = new THREE.CylinderGeometry(rt, rb, 1.0, 32, 1, true);
+
+      if (!this._coneMat) {
+        this._coneMat = new THREE.MeshBasicMaterial({
+          color: new THREE.Color(d.color),
+          map: this._coneTex,
+          alphaMap: this._coneTex,
+          transparent: true,
+          opacity: d.opacity * d.solidFactor,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+          depthTest: true,
+          side: THREE.DoubleSide,
+          fog: true
+        });
+      }
+
+      this._coneMesh = new THREE.Mesh(geo, this._coneMat);
+      this._coneMesh.renderOrder = 30;
+
+      // Particles removed (per request). Keep only the faint additive cone.
+      if (this._pts) {
+        this._group.remove(this._pts);
+        this._pts = null;
+      }
+      if (this._ptsGeo) { this._ptsGeo.dispose(); this._ptsGeo = null; }
+      if (this._ptsMat) { this._ptsMat.dispose(); this._ptsMat = null; }
+
+      this._group.clear();
+      this._group.add(this._coneMesh);
+
+      this._lastRT = rt; this._lastRB = rb; this._lastH = h;
+    }
+
+    // Scale to requested height (geometry is unit height, centered at origin).
+    if (this._coneMesh) {
+      this._coneMesh.scale.set(1, h, 1);
+    }
+
+    // Material updates
+    if (this._coneMat) {
+      this._coneMat.color.set(d.color);
+      this._coneMat.opacity = d.opacity * d.solidFactor;
+      this._coneMat.needsUpdate = true;
+    }
+
+    if (this._ptsMat) {
+      this._ptsMat.size = d.pSize;
+      this._ptsMat.needsUpdate = true;
+    }
+  }
+});
+
+AFRAME.registerComponent('fol-cone-anim', {
+  schema: {
+    seed:  {type: 'number', default: 1},
+    amp:   {type: 'number', default: 0.13},
+    speed: {type: 'number', default: 0.9}
+  },
+
+  init: function () {
+    // Find first descendant with a spot light.
+    this._lightEl = null;
+    const kids = this.el.querySelectorAll('[light]');
+    for (let i = 0; i < kids.length; i++) {
+      const l = kids[i].getAttribute('light');
+      if (l && l.type === 'spot') { this._lightEl = kids[i]; break; }
+    }
+
+    this._lampEl = this.el.querySelector('.fol_lamp');
+
+    this._baseI = 0.0;
+    if (this._lightEl) {
+      const l = this._lightEl.getAttribute('light');
+      this._baseI = (l && typeof l.intensity === 'number') ? l.intensity : 0.35;
+    }
+  },
+
+  tick: function (timeMs) {
+    const t = timeMs * 0.001;
+    const s = this.data.seed;
+
+    // Very subtle breathing (no noticeable flicker).
+    const w = 0.5 + 0.5 * Math.sin(t * this.data.speed + s * 1.37);
+    const w2 = 0.5 + 0.5 * Math.sin(t * (this.data.speed * 2.1) + s * 2.91);
+    const k = 1.0 - this.data.amp + this.data.amp * (0.72 * w + 0.28 * w2);
+
+    if (this._lightEl) {
+      this._lightEl.setAttribute('light', 'intensity', this._baseI * k);
+    }
+
+    // Lamp disc emissive intensity modulation (direct material poke; very cheap).
+    if (this._lampEl) {
+      const mesh = this._lampEl.getObject3D('mesh');
+      if (mesh && mesh.material) {
+        const baseE = 26.0;
+        mesh.material.emissiveIntensity = baseE * (0.92 + 0.08 * w);
+      }
+    }
   }
 });
 
@@ -6572,7 +7182,6 @@ AFRAME.registerComponent('pool-sheen-fresnel', {
 })();
 
 
-
 /* --- Force double-sided material on a mesh (for interior wall visibility) --- */
 AFRAME.registerComponent('force-double-side', {
   init: function () {
@@ -6627,7 +7236,6 @@ AFRAME.registerGeometry('extruded-ring', {
     this.geometry = geo;
   }
 });
-
 
 
 // Builds a solid *side-wall* volume from a displaced ring surface.
@@ -6947,6 +7555,7 @@ AFRAME.registerComponent('aya-seat-experience', {
 // When ESC releases pointer lock during the video, treat that as "exit video".
 // When seated-ready, treat pointer-lock release as "stand up" (ESC).
 this._onPointerLockChange = () => {
+  if (!this.state) return;
   if (this.state.autopilot) return;
   if (performance.now() < this._suppressPointerLockUntil) {
     this._wasPointerLocked = !!document.pointerLockElement;
@@ -8559,7 +9168,94 @@ return chosen * 180 / Math.PI;
 
 
   // Ensure glass materials don't write depth (prevents them from occluding inner glow/core).
-  AFRAME.registerComponent('glass-depthfix', {
+  
+
+    // Adds a subtle animated micro-normal to the mercury surface to improve perceived resolution/detail
+    // without increasing reflection RT resolution or geometry density.
+    AFRAME.registerComponent('mercury-micro-normals', {
+      schema: {
+        strength:  { type: 'number', default: 1.35 },
+        repeatX:   { type: 'number', default: 1.15 },
+        repeatY:   { type: 'number', default: 1.85 },
+        flowScale: { type: 'number', default: 0.22 },
+        flowRotate:{ type: 'number', default: 0.18 }
+      },
+
+      init: function(){
+        this._mats = [];
+        this._tex = null;
+
+        const apply = () => {
+          const mesh = this.el.getObject3D('mesh');
+          if (!mesh) return;
+          const S = window.__S4_MERCURY_SHARED;
+          if (!S || !S._ensure) return;
+          S._ensure();
+          if (!S.tex) return;
+
+          const tex = S.tex;
+          tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+          tex.repeat.set(this.data.repeatX, this.data.repeatY);
+          tex.center.set(0.5, 0.5);
+
+          const mats = [];
+          mesh.traverse((o) => {
+            if (!o.isMesh || !o.material) return;
+            const arr = Array.isArray(o.material) ? o.material : [o.material];
+            arr.forEach((m) => {
+              if (!m) return;
+              // Keep the existing material (MeshStandardMaterial) and just add a shared normal map.
+              m.normalMap = tex;
+              if (m.normalScale && m.normalScale.set) m.normalScale.set(this.data.strength, this.data.strength);
+              else m.normalScale = new THREE.Vector2(this.data.strength, this.data.strength);
+              m.needsUpdate = true;
+              mats.push(m);
+            });
+          });
+
+          // Save refs for tick updates
+          this._mats = mats;
+          this._tex = tex;
+        };
+
+        if (this.el.sceneEl && this.el.sceneEl.renderer) apply();
+        else this.el.sceneEl && this.el.sceneEl.addEventListener('renderstart', apply, { once: true });
+      },
+
+      update: function(){
+        if (!this._tex) return;
+        this._tex.repeat.set(this.data.repeatX, this.data.repeatY);
+        if (this._mats && this._mats.length){
+          this._mats.forEach((m) => {
+            if (m && m.normalScale && m.normalScale.set) m.normalScale.set(this.data.strength, this.data.strength);
+          });
+        }
+      },
+
+      tick: function(time){
+        if (!this._tex) return;
+        const S = window.__S4_MERCURY_SHARED;
+        if (!S) return;
+
+        // Drive the shared normal texture update (very cheap: 96x96 every ~320ms)
+        if (S.update) S.update(time || 0);
+
+        const f = S.flow || 0;
+        const t = (time || 0) / 1000;
+        const base = f * this.data.flowScale;
+
+        const mod1 = (x) => {
+          x = x % 1;
+          return (x < 0) ? (x + 1) : x;
+        };
+
+        this._tex.offset.x = mod1(base * 1.00);
+        this._tex.offset.y = mod1(base * 0.44 + 0.14 * Math.sin(f * 0.55 + t * 0.12) + 0.07 * Math.sin(f * 0.21));
+        this._tex.rotation = this.data.flowRotate * Math.sin(f * 0.18 + t * 0.08);
+      }
+    });
+
+AFRAME.registerComponent('glass-depthfix', {
     init: function () {
       const apply = () => {
         const mesh = this.el.getObject3D('mesh');
@@ -8580,6 +9276,110 @@ return chosen * 180 / Math.PI;
       apply();
     }
   });
+
+
+// ===== Torch V2: pooled light (1 real light for all torches) =====
+AFRAME.registerComponent('torch-light-pool', {
+  schema: {
+    rig: { type: 'selector' },
+    camera: { type: 'selector' },
+    light: { type: 'selector' },
+    selector: { type: 'string', default: '.torchAnchor' },
+    maxDistance: { type: 'number', default: 9.5 },
+    baseIntensity: { type: 'number', default: 1.35 },
+    updateHz: { type: 'number', default: 12 },
+    fovDot: { type: 'number', default: 0.08 }
+  },
+
+  init: function () {
+    this._torches = [];
+    this._next = 0;
+    this._rigPos = new THREE.Vector3();
+    this._camPos = new THREE.Vector3();
+    this._camDir = new THREE.Vector3();
+    this._tmp = new THREE.Vector3();
+    this._flamePos = new THREE.Vector3();
+
+    const scene = this.el.sceneEl;
+    const collect = () => {
+      this._torches.length = 0;
+      const nodes = (scene && scene.querySelectorAll) ? scene.querySelectorAll(this.data.selector) : [];
+      nodes.forEach(n => {
+        // Prefer the futuristic flame child as the anchor point.
+        let flame = n.querySelector('[futuristic-flame]');
+        if (!flame) {
+          // Fallback: an entity with id ending in _flame or containing flame_core.
+          flame = n.querySelector('[id$="_flame"], #torch_flame_core');
+        }
+        this._torches.push({ el: n, flame: flame || n });
+      });
+    };
+
+    collect();
+    // Re-collect after scene settles (imported DOM etc)
+    setTimeout(collect, 500);
+    setTimeout(collect, 1500);
+  },
+
+  tick: function (time) {
+    const hz = Math.max(2, this.data.updateHz || 12);
+    const step = 1000 / hz;
+    if (time < this._next) return;
+    this._next = time + step;
+
+    const rig = this.data.rig;
+    const camEl = this.data.camera;
+    const lightEl = this.data.light;
+    if (!rig || !camEl || !lightEl) return;
+
+    const lightObj = lightEl.getObject3D('light');
+    if (!lightObj) return;
+
+    // World positions
+    rig.object3D.getWorldPosition(this._rigPos);
+    const camObj = camEl.getObject3D('camera') || camEl.object3D;
+    camObj.getWorldPosition(this._camPos);
+    camObj.getWorldDirection(this._camDir);
+
+    // Find nearest torch in range.
+    let best = null;
+    let bestD2 = Infinity;
+
+    for (let i = 0; i < this._torches.length; i++) {
+      const t = this._torches[i];
+      if (!t || !t.flame) continue;
+      t.flame.object3D.getWorldPosition(this._flamePos);
+      const d2 = this._flamePos.distanceToSquared(this._rigPos);
+      if (d2 < bestD2) {
+        bestD2 = d2;
+        best = t;
+      }
+    }
+
+    const maxD = this.data.maxDistance;
+    if (!best || bestD2 > (maxD * maxD)) {
+      lightObj.intensity = 0.0;
+      return;
+    }
+
+    // FOV-ish gating: only when roughly in front of camera.
+    best.flame.object3D.getWorldPosition(this._flamePos);
+    this._tmp.copy(this._flamePos).sub(this._camPos).normalize();
+    const dot = this._tmp.dot(this._camDir);
+    if (dot < this.data.fovDot) {
+      lightObj.intensity = 0.0;
+      return;
+    }
+
+    // Position the pooled light at the torch flame.
+    lightEl.object3D.position.copy(this._flamePos);
+
+    // Distance-based intensity curve (smooth and stable).
+    const d = Math.sqrt(bestD2);
+    const x = Math.max(0, 1 - (d / maxD));
+    lightObj.intensity = this.data.baseIntensity * (0.35 + 0.65 * x * x);
+  }
+});
 
 AFRAME.registerComponent('torch-flicker', {
       schema: { base: {default: 2.6}, amp: {default: 0.9} },
@@ -8816,7 +9616,7 @@ AFRAME.registerComponent('realism-postfx', {
 
       // Tone mapping for more filmic response.
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = renderer.toneMappingExposure || 0.90;
+      renderer.toneMappingExposure = 3.0;
 
       const size = renderer.getSize(new THREE.Vector2());
       const w = size.x, h = size.y;
@@ -9027,8 +9827,6 @@ AFRAME.registerComponent('cave-displace', {
     }
   }
 });
-
-
 
 
 // Pulls the lowest edge of the cave shell down to meet the floor (world Y), with a smooth falloff upward.
@@ -9369,6 +10167,7 @@ AFRAME.registerComponent('rig-walk', {
 // When ESC releases pointer lock during the video, treat that as "exit video".
 // When seated-ready, treat pointer-lock release as "stand up" (ESC).
 this._onPointerLockChange = () => {
+  if (!this.state) return;
   if (this.state.autopilot) return;
   if (this.state.step === 3) {
     this._stopExperience(/*byEsc=*/true);
@@ -9611,6 +10410,7 @@ AFRAME.registerComponent('floor-seam-sculpt', {
 
   init: function () {
     this._applied = false;
+    this._inv = new THREE.Matrix4();
     this._apply = this._apply.bind(this);
     this.el.addEventListener('object3dset', this._apply);
     setTimeout(this._apply, 0);
@@ -11087,6 +11887,7 @@ AFRAME.registerComponent('triplanar-diffuse', {
 
   init: function () {
     this._applied = false;
+    this._inv = new THREE.Matrix4();
     this._apply = this._apply.bind(this);
     this.el.addEventListener('object3dset', this._apply);
     this.el.addEventListener('model-loaded', this._apply);
@@ -11209,6 +12010,7 @@ AFRAME.registerComponent('spherical-segment-clip', {
   },
   init: function () {
     this._applied = false;
+    this._inv = new THREE.Matrix4();
     this._onSet = (e) => {
       if (e.detail && e.detail.type === 'mesh') this.apply();
     };
@@ -11321,6 +12123,7 @@ AFRAME.registerComponent('cylindrical-clip', {
   },
   init: function () {
     this._applied = false;
+    this._inv = new THREE.Matrix4();
     this._mats = [];
     this._apply = this._apply.bind(this);
 
@@ -11401,7 +12204,7 @@ AFRAME.registerComponent('cylindrical-clip', {
     if (!tgt || !tgt.object3D) return;
 
     tgt.object3D.updateMatrixWorld(true);
-    const inv = new THREE.Matrix4().copy(tgt.object3D.matrixWorld).invert();
+    const inv = this._inv.copy(tgt.object3D.matrixWorld).invert();
 
     for (let i = 0; i < this._mats.length; i++) {
       const mat = this._mats[i];
@@ -11502,7 +12305,13 @@ AFRAME.registerComponent('seam-grain-fringe', {
       if (srcMat.roughnessMap) mat.roughnessMap = srcMat.roughnessMap;
       // aoMap requires uv2; our spheres don't have uv2, so we skip it intentionally.
       if (srcMat.envMapIntensity != null) mat.envMapIntensity = srcMat.envMapIntensity;
-      if (srcMat.normalScale) mat.normalScale = srcMat.normalScale.clone();
+      if (srcMat.normalScale) {
+        if (typeof srcMat.normalScale.clone === "function") {
+          mat.normalScale = srcMat.normalScale.clone();
+        } else if (srcMat.normalScale.x != null && srcMat.normalScale.y != null) {
+          mat.normalScale = new THREE.Vector2(srcMat.normalScale.x, srcMat.normalScale.y);
+        }
+      }
     }
 
     mat.side = THREE.FrontSide;
@@ -11578,10 +12387,9 @@ AFRAME.registerComponent('seam-grain-fringe', {
 </script>
 
 
-
   <a-scene tabindex="0" auto-focus simple-ibl="intensity: 0.35; color: #e4ebf4"
            background="color: #020202"
-           fog="type: exponential; color: #03060c; density: 0.023"
+           fog="type: exponential; color: #03060c; density: 0.027"
            renderer="antialias: true; colorManagement: true; physicallyCorrectLights: true; exposure: 1.25; highRefreshRate: true; powerPreference: high-performance;"
            vr-mode-ui="enabled: false">
 
@@ -11612,10 +12420,12 @@ AFRAME.registerComponent('seam-grain-fringe', {
   <img id="elevMetalMetal" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/assets/metal_elevator_door/metal_elevator_Metalness.png">
 
   <video id="ayaExperienceVideo" crossorigin="anonymous" playsinline webkit-playsinline preload="auto" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/rooms/aya_visual_experience.mp4"></video>
+
+  <!-- Torch V2: unlit cinematic glow cards (no real-time lights per torch) -->
+  <img id="torchGlowTex" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='256' height='256' viewBox='0 0 256 256'><defs><radialGradient id='g' cx='50%25' cy='50%25' r='60%25'><stop offset='0%25' stop-color='%23d9f1ff' stop-opacity='1'/><stop offset='28%25' stop-color='%23bfe6ff' stop-opacity='0.65'/><stop offset='55%25' stop-color='%238ad4ff' stop-opacity='0.22'/><stop offset='100%25' stop-color='%238ad4ff' stop-opacity='0'/></radialGradient></defs><rect width='256' height='256' fill='url(%23g)'/></svg>" />
+  <img id="torchShaftTex" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='128' height='512' viewBox='0 0 128 512'><defs><linearGradient id='s' x1='0' y1='0' x2='0' y2='1'><stop offset='0%25' stop-color='%23d9f1ff' stop-opacity='0'/><stop offset='10%25' stop-color='%23d9f1ff' stop-opacity='0.12'/><stop offset='55%25' stop-color='%23bfe6ff' stop-opacity='0.08'/><stop offset='100%25' stop-color='%23bfe6ff' stop-opacity='0'/></linearGradient></defs><rect width='128' height='512' fill='url(%23s)'/></svg>" />
+  <img id="torchSplashTex" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='512' height='256' viewBox='0 0 512 256'><defs><radialGradient id='p' cx='35%25' cy='55%25' r='70%25'><stop offset='0%25' stop-color='%23d9f1ff' stop-opacity='0.18'/><stop offset='35%25' stop-color='%23bfe6ff' stop-opacity='0.10'/><stop offset='75%25' stop-color='%238ad4ff' stop-opacity='0.04'/><stop offset='100%25' stop-color='%238ad4ff' stop-opacity='0'/></radialGradient></defs><rect width='512' height='256' fill='url(%23p)'/></svg>" />
 </a-assets>
-
-
-
 
 
     
@@ -11654,10 +12464,6 @@ AFRAME.registerComponent('seam-grain-fringe', {
       shadow="cast:false; receive:true"
       uv2-from-uv
       solidify-from-ring="source: #aya_dome_sand_floor; thickness: 0.22"></a-entity>
-
-
-
-
 
 
   <!-- Dome-style stone clusters -->
@@ -11719,7 +12525,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
   <!-- Rebuilt solid dome shell (single closed mesh with real wall thickness) -->
   <a-entity id="aya_dome_shell"
             position="0 3.35 38.7"
-            rotation="0 12 0"
+            rotation="0 92 0"
             thick-dome-shell="radius: 12;
                               innerScale: 1.15 0.68 1.05;
                               outerScale: 1.19 0.71 1.09;
@@ -11742,8 +12548,19 @@ AFRAME.registerComponent('seam-grain-fringe', {
                               gain: 0.52"
 
             portal-cut-wait="target: #tunnel_01_shell_inner; far: #tunnel_01_rim_far; anchor: #merge_portal_anchor; targetAxis: 0 1 0; radius: 1.25; padding: 0.28; safety: 1.08; halfLength: 12.5; epsilon: 0.03"
-></a-entity>
 
+            cylindrical-clip="target: #tunnel_02_cutref; radius: 1.34; halfLength: 4.20"></a-entity>
+
+  <!-- Reflection-only proxy: gives the mercury reflection a clean, stable cavern silhouette
+       without forcing the reflector to re-render the full high-poly dome. -->
+  <a-entity id="mercury_reflection_proxy_dome"
+            position="0 3.35 38.7"
+            rotation="0 92 0"
+            reflect-layer="layer: 1; exclusive: true"
+            geometry="primitive: sphere; radius: 12; segmentsWidth: 32; segmentsHeight: 18"
+            scale="1.19 0.71 1.09"
+            material="shader: standard; color: #0f1116; roughness: 1.0; metalness: 0.0; side: back"
+            shadow="cast:false; receive:false"></a-entity>
 
 
 <!-- Mercury basin (walkable ring around it) -->
@@ -11799,9 +12616,10 @@ AFRAME.registerComponent('seam-grain-fringe', {
 
     <!-- Liquid metal surface (square grid clipped to disc; animated micro motion) -->
     <a-entity id="mercury_surface" render-order="value: 3"
-              geometry="primitive: plane; width: 8.120; height: 8.120; segmentsWidth: 128; segmentsHeight: 128"              rotation="-90 0 0"
+              mercury-micro-normals="strength: 1.35; repeatX: 1.15; repeatY: 1.85; flowScale: 0.22; flowRotate: 0.18"
+              geometry="primitive: plane; width: 8.120; height: 8.120; segmentsWidth: 96; segmentsHeight: 96"              rotation="-90 0 0"
               position="0 0.045 38.7"
-              material="shader: standard; color: #343a43; metalness: 1.0; roughness: 0.06; envMapIntensity: 1.25; emissive: #000000; emissiveIntensity: 0; transparent: false; opacity: 1; side: double; depthWrite: true; depthTest: true; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"
+              material="shader: standard; color: #343a43; metalness: 1.0; roughness: 0.140; envMapIntensity: 1.18; emissive: #000000; emissiveIntensity: 0; transparent: false; opacity: 1; side: double; depthWrite: true; depthTest: true; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"
               mercury-surface-gpu="amp: 0.038; radius: 4.05; maxDown: 0.022; speed: 0.240; rippleFreq: 2.8; whirlCount: 5; lifeMin: 9; lifeMax: 22; drift: 0.030; seed: 17"
               shadow="cast:false; receive:false" mercury-ibl-silver="intensity: 1">
     <!-- Liquid metal fill layer (prevents ground peek-through when the top surface dimples) -->
@@ -11809,62 +12627,143 @@ AFRAME.registerComponent('seam-grain-fringe', {
 
 </a-entity>
 
-    <!-- Planar reflection overlay (dynamic reflection of the split sphere on the mercury surface) -->
+    <!-- Pool glow + light rig (replaces the sphere core illumination; optimized for Safari) -->
+    <a-entity id="mercury_pool_light_rig" position="0 0.55 38.7">
+      <!-- Pool-emitted light (distributed, no single hotspot). Localized so tunnel/entrance stay dark. -->
+      <a-entity position="0 2.10 0" light="type: point; color: #cfe9ff; intensity: 0.85; distance: 15; decay: 2; castShadow: false"></a-entity>
+      <a-entity position="2.20 1.60 0" light="type: point; color: #cfe9ff; intensity: 0.55; distance: 12; decay: 2; castShadow: false"></a-entity>
+      <a-entity position="-2.20 1.60 0" light="type: point; color: #cfe9ff; intensity: 0.55; distance: 12; decay: 2; castShadow: false"></a-entity>
+      <a-entity position="0 1.60 2.20" light="type: point; color: #cfe9ff; intensity: 0.55; distance: 12; decay: 2; castShadow: false"></a-entity>
+      <a-entity position="0 1.60 -2.20" light="type: point; color: #cfe9ff; intensity: 0.55; distance: 12; decay: 2; castShadow: false"></a-entity>
+      <!-- Very soft overhead fill so the dome does not read as one-sided-lit -->
+      <a-entity position="0 4.90 0" light="type: point; color: #d9f1ff; intensity: 0.28; distance: 36; decay: 2; castShadow: false"></a-entity>
+    </a-entity>
+    <!-- ===== Forest-of-Lights ring (7 cones) =====
+         Concept: a sparse outer ring of narrow light cones around the rock seats.
+         Performance: no shadows; 7 small spotlights + 7 additive cone meshes. -->
+        <!-- ===== Forest-of-Lights ring (7 cones) =====
+         Concept: a sparse outer ring of narrow light cones around the rock seats.
+         Performance: no shadows; 7 small spotlights + 7 additive cone meshes. -->
+    <a-entity id="forest_of_lights_ring" position="0 0 0">
+      <!-- Cone 01 (0.00°) -->
+      <a-entity id="fol_01" fol-cone-anim="seed: 1" position="8.10 0 38.70">
+        <a-entity position="0 5.40 0" rotation="-90 0 0" light="type: spot; color: #cfe9ff; intensity: 2.55; angle: 2.7; penumbra: 0.6; distance: 36; decay: 2; castShadow: false"></a-entity>
+        <a-circle class="fol_lamp" radius="0.045" position="0 5.40 0" rotation="-90 0 0"
+                  material="shader: standard; color: #000000; emissive: #d9f1ff; emissiveIntensity: 56.0; metalness: 0.0; roughness: 1.0; transparent: true; opacity: 1; side: double; fog: true"
+                  shadow="cast:false; receive:false"></a-circle>
+        <a-entity fol-beam="height: 7.0; radiusTop: 0.04; radiusBottom: 0.28; color: #bfe8ff; opacity: 0.34"
+                  position="0 1.90 0"
+                  shadow="cast:false; receive:false"></a-entity>
+      </a-entity>
+
+      <!-- Cone 02 (51.43°) -->
+      <a-entity id="fol_02" fol-cone-anim="seed: 2" position="5.05 0 45.03">
+        <a-entity position="0 5.40 0" rotation="-90 0 0" light="type: spot; color: #cfe9ff; intensity: 2.55; angle: 2.7; penumbra: 0.6; distance: 36; decay: 2; castShadow: false"></a-entity>
+        <a-circle class="fol_lamp" radius="0.045" position="0 5.40 0" rotation="-90 0 0"
+                  material="shader: standard; color: #000000; emissive: #d9f1ff; emissiveIntensity: 56.0; metalness: 0.0; roughness: 1.0; transparent: true; opacity: 1; side: double; fog: true"
+                  shadow="cast:false; receive:false"></a-circle>
+        <a-entity fol-beam="height: 7.0; radiusTop: 0.04; radiusBottom: 0.28; color: #bfe8ff; opacity: 0.34"
+                  position="0 1.90 0"
+                  shadow="cast:false; receive:false"></a-entity>
+      </a-entity>
+
+      <!-- Cone 03 (102.86°) -->
+      <a-entity id="fol_03" fol-cone-anim="seed: 3" position="-1.80 0 46.60">
+        <a-entity position="0 5.40 0" rotation="-90 0 0" light="type: spot; color: #cfe9ff; intensity: 2.55; angle: 2.7; penumbra: 0.6; distance: 36; decay: 2; castShadow: false"></a-entity>
+        <a-circle class="fol_lamp" radius="0.045" position="0 5.40 0" rotation="-90 0 0"
+                  material="shader: standard; color: #000000; emissive: #d9f1ff; emissiveIntensity: 56.0; metalness: 0.0; roughness: 1.0; transparent: true; opacity: 1; side: double; fog: true"
+                  shadow="cast:false; receive:false"></a-circle>
+        <a-entity fol-beam="height: 7.0; radiusTop: 0.04; radiusBottom: 0.28; color: #bfe8ff; opacity: 0.34"
+                  position="0 1.90 0"
+                  shadow="cast:false; receive:false"></a-entity>
+      </a-entity>
+
+      <!-- Cone 04 (154.29°) -->
+      <a-entity id="fol_04" fol-cone-anim="seed: 4" position="-7.30 0 42.21">
+        <a-entity position="0 5.40 0" rotation="-90 0 0" light="type: spot; color: #cfe9ff; intensity: 2.55; angle: 2.7; penumbra: 0.6; distance: 36; decay: 2; castShadow: false"></a-entity>
+        <a-circle class="fol_lamp" radius="0.045" position="0 5.40 0" rotation="-90 0 0"
+                  material="shader: standard; color: #000000; emissive: #d9f1ff; emissiveIntensity: 56.0; metalness: 0.0; roughness: 1.0; transparent: true; opacity: 1; side: double; fog: true"
+                  shadow="cast:false; receive:false"></a-circle>
+        <a-entity fol-beam="height: 7.0; radiusTop: 0.04; radiusBottom: 0.28; color: #bfe8ff; opacity: 0.34"
+                  position="0 1.90 0"
+                  shadow="cast:false; receive:false"></a-entity>
+      </a-entity>
+
+      <!-- Cone 05 (205.71°) -->
+      <a-entity id="fol_05" fol-cone-anim="seed: 5" position="-7.30 0 35.19">
+        <a-entity position="0 5.40 0" rotation="-90 0 0" light="type: spot; color: #cfe9ff; intensity: 2.55; angle: 2.7; penumbra: 0.6; distance: 36; decay: 2; castShadow: false"></a-entity>
+        <a-circle class="fol_lamp" radius="0.045" position="0 5.40 0" rotation="-90 0 0"
+                  material="shader: standard; color: #000000; emissive: #d9f1ff; emissiveIntensity: 56.0; metalness: 0.0; roughness: 1.0; transparent: true; opacity: 1; side: double; fog: true"
+                  shadow="cast:false; receive:false"></a-circle>
+        <a-entity fol-beam="height: 7.0; radiusTop: 0.04; radiusBottom: 0.28; color: #bfe8ff; opacity: 0.34"
+                  position="0 1.90 0"
+                  shadow="cast:false; receive:false"></a-entity>
+      </a-entity>
+
+      <!-- Cone 06 (257.14°) -->
+      <a-entity id="fol_06" fol-cone-anim="seed: 6" position="-1.80 0 30.80">
+        <a-entity position="0 5.40 0" rotation="-90 0 0" light="type: spot; color: #cfe9ff; intensity: 2.55; angle: 2.7; penumbra: 0.6; distance: 36; decay: 2; castShadow: false"></a-entity>
+        <a-circle class="fol_lamp" radius="0.045" position="0 5.40 0" rotation="-90 0 0"
+                  material="shader: standard; color: #000000; emissive: #d9f1ff; emissiveIntensity: 56.0; metalness: 0.0; roughness: 1.0; transparent: true; opacity: 1; side: double; fog: true"
+                  shadow="cast:false; receive:false"></a-circle>
+        <a-entity fol-beam="height: 7.0; radiusTop: 0.04; radiusBottom: 0.28; color: #bfe8ff; opacity: 0.34"
+                  position="0 1.90 0"
+                  shadow="cast:false; receive:false"></a-entity>
+      </a-entity>
+
+      <!-- Cone 07 (308.57°) -->
+      <a-entity id="fol_07" fol-cone-anim="seed: 7" position="5.05 0 32.37">
+        <a-entity position="0 5.40 0" rotation="-90 0 0" light="type: spot; color: #cfe9ff; intensity: 2.55; angle: 2.7; penumbra: 0.6; distance: 36; decay: 2; castShadow: false"></a-entity>
+        <a-circle class="fol_lamp" radius="0.045" position="0 5.40 0" rotation="-90 0 0"
+                  material="shader: standard; color: #000000; emissive: #d9f1ff; emissiveIntensity: 56.0; metalness: 0.0; roughness: 1.0; transparent: true; opacity: 1; side: double; fog: true"
+                  shadow="cast:false; receive:false"></a-circle>
+        <a-entity fol-beam="height: 7.0; radiusTop: 0.04; radiusBottom: 0.28; color: #bfe8ff; opacity: 0.34"
+                  position="0 1.90 0"
+                  shadow="cast:false; receive:false"></a-entity>
+      </a-entity>
+
+    </a-entity>
+
+
+<!-- Subtle visible glow so it feels like light is emanating from the pool (does not affect lighting) -->
+    <a-circle id="mercury_pool_glow" render-order="value: 4"
+              radius="4.10"
+              position="0 0.050 38.7" rotation="-90 0 0"
+              material="shader: flat; color: #d9f1ff; transparent: true; opacity: 0.018; side: double; depthWrite: false; depthTest: true; polygonOffset: true; polygonOffsetFactor: -3; polygonOffsetUnits: -3"
+              shadow="cast:false; receive:false"></a-circle>
+    <!-- Emissive bloom disc (drives soft glow from pool without extra lights) -->
+    <a-circle id="mercury_pool_emissive" render-order="value: 5"
+              radius="4.18"
+              position="0 0.049 38.7" rotation="-90 0 0"
+              material="shader: standard; color: #000000; emissive: #d9f1ff; emissiveIntensity: 4.5; metalness: 0.0; roughness: 1.0; transparent: true; opacity: 0.10; side: double; depthWrite: false; depthTest: true; polygonOffset: true; polygonOffsetFactor: -3; polygonOffsetUnits: -3"
+              shadow="cast:false; receive:false"></a-circle>
+
+<!-- Planar reflection overlay (dynamic reflection of the split sphere on the mercury surface) -->
     <a-entity id="mercury_surface_reflection" render-order="value: 6"
               geometry="primitive: circle; radius: 4.05; segments: 64"
               rotation="-90 0 0"
               position="0 0.052 38.7"
-              planar-reflector="resolution: 512; maxHz: 12; forcePosDelta: 0.06; forceAngDelta: 0.04; maxDistance: 18; pauseWhenOverlay: true; pauseWhenVideo: true; color: #15181f; opacity: 0.46; clipBias: 0.003"
+              planar-reflector="resolution: 256; maxHz: 4; forcePosDelta: 0.10; forceAngDelta: 0.07; maxDistance: 15; maxFar: 55; pauseWhenOverlay: true; pauseWhenVideo: true; reflectLayer: 1; color: #15181f; opacity: 0.46; clipBias: 0.003"
               shadow="cast:false; receive:false"></a-entity>
     <!-- Experience video overlay (enabled when seated + user presses F) -->
     <a-entity id="aya_experience_video"
               visible="false"
               render-order="value: 7"
-              geometry="primitive: circle; radius: 4.05; segments: 64"
+              geometry="primitive: circle; radius: 4.05; segments: 48"
               rotation="-90 0 0"
               position="0 0.055 38.7"
               material="shader: flat; src: #ayaExperienceVideo; side: double; transparent: true; opacity: 1; depthTest: true; polygonOffset: true; polygonOffsetFactor: -4; polygonOffsetUnits: -4"></a-entity>
-
-
-    <!-- Floating sphere with an equatorial gap revealing the core (single sphere silhouette, not two offset halves) -->
-    <a-entity id="mercury_floating_sphere"
-              position="0 2.545 38.7"
-              shadow="cast:true; receive:false"
-              sin-bob="baseY: 2.545; amp: 0.085; speed: 0.05"
-              spin="speed: 1.6; axis: y"
-              perforated-sphere-light="radius: 1.52; holes: 77; holeSize: 0.0015; beamMin: 4.5; beamMax: 24; beamRadius: 0.013; baseOpacity: 0.23; blue: #7cc9ff; white: #ffffff; flicker: 0.70; wobble: 0.006; innerFrac: 0.50; spillBoost: 1.55; glowBoost: 1.35; lightCount: 8; lightAngle: 0.070; lightReach: 58">
-      <a-entity id=\"beam_dust\" beam-dust></a-entity>
-
-      <!-- Visible core (spherical flame like the torches, but stronger) -->
-      <a-entity id="sphere_core_flame"
-                position="0 0 0"
-                futuristic-flame="radius: 0.54; height: 0.92; hue: 205; intensity: 7.2"
-                animation__core_pulse="property: scale; dir: alternate; dur: 2200; easing: easeInOutSine; loop: true; to: 1.06 1.06 1.06"></a-entity>
-
-      <!-- Core light (drives the room illumination; no additional key/fill added) -->
-      <a-entity id="sphere_core_light"
-                position="0 0 0"
-                light="type: point; color: #d9f1ff; intensity: 9.0; distance: 160; decay: 2; castShadow: false"></a-entity>
-      <!-- Sphere shell (single mesh + shader gap; stable silhouette from all angles) -->
-<a-entity id="sphere_shell"
-          geometry="primitive: sphere; radius: 1.52; segmentsWidth: 96; segmentsHeight: 72"
-          position="0 0 0"
-          material="shader: standard; src: #metalElevatorColor; normalMap: #metalElevatorNormal; roughnessMap: #metalElevatorRough; metalnessMap: #metalElevatorMetalness; displacementMap: #metalElevatorDisplacement; repeat: 1 1; metalness: 1; roughness: 0.35; displacementScale: 0.03; displacementBias: 0; emissive: #000000; emissiveIntensity: 0; side: double"
-          pool-sheen-fresnel="color: #a8e5ff; intensity: 0.55; fresnelPower: 3.4; radius: 1.52"          render-order="value: 20"></a-entity>
-
-</a-entity>
-
 <a-entity id="mercury_surface_fill" render-order="value: 2"
-          geometry="primitive: plane; width: 8.120; height: 8.120; segmentsWidth: 96; segmentsHeight: 96"
+          geometry="primitive: plane; width: 8.120; height: 8.120; segmentsWidth: 72; segmentsHeight: 72"
           disc-clip="radius: 4.050"
           rotation="-90 0 0"
           position="0 -0.070 38.7"
-          material="shader: standard; color: #2f353e; metalness: 1.0; roughness: 0.06; transparent: true; opacity: 0.98; polygonOffset: true; polygonOffsetFactor: -1; polygonOffsetUnits: -1"
+          material="shader: standard; color: #2f353e; metalness: 1.0; roughness: 0.085; transparent: true; opacity: 0.98; polygonOffset: true; polygonOffsetFactor: -1; polygonOffsetUnits: -1"
           shadow="cast:false; receive:false" mercury-ibl-silver="intensity: 0.9"></a-entity>
 
     <!-- Subsurface safety layer (always liquid beneath; prevents any accidental ground peek-through) -->
     <a-entity id="mercury_subsurface" render-order="value: 1"
-              geometry="primitive: plane; width: 8.120; height: 8.120; segmentsWidth: 64; segmentsHeight: 64"
+              geometry="primitive: plane; width: 8.120; height: 8.120; segmentsWidth: 48; segmentsHeight: 48"
               rotation="-90 0 0"
               position="0 -0.160 38.7"
               material="shader: standard; color: #272d35; metalness: 1.0; roughness: 0.14; envMapIntensity: 0.95; transparent: false; opacity: 1; side: double; depthWrite: true; depthTest: true"
@@ -11876,7 +12775,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
     <a-circle id="mercury_static_circle" render-order="value: 0"
               radius="4.05"
               position="0 -0.260 38.7" rotation="-90 0 0"
-              material="shader: standard; color: #1c2028; metalness: 1.0; roughness: 0.095; envMapIntensity: 1.05; emissive: #000000; emissiveIntensity: 0; side: double; transparent: false; opacity: 1; depthWrite: true; depthTest: true; polygonOffset: true; polygonOffsetFactor: 1; polygonOffsetUnits: 1"
+              material="shader: standard; color: #1c2028; metalness: 1.0; roughness: 0.115; envMapIntensity: 1.05; emissive: #000000; emissiveIntensity: 0; side: double; transparent: false; opacity: 1; depthWrite: true; depthTest: true; polygonOffset: true; polygonOffsetFactor: 1; polygonOffsetUnits: 1"
               shadow="cast:false; receive:false" mercury-ibl-silver="intensity: 0.85"></a-circle>
 <!-- Invisible collider so the ring stays walkable and you can't step into the liquid -->
     <a-cylinder class="collider" visible="false" radius="3.95" height="2.8" position="0 1.4 38.7"></a-cylinder>
@@ -11891,7 +12790,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
     <!-- Cavern perimeter ring (ellipse). Closed perimeter (no openings). -->
     <!-- NOTE: opening narrowed to match portal width so you can't walk through the dome wall elsewhere -->
     <a-entity id="mercury_cavern_ring"
-              collider-ring="center: 0 0 38.7; radiusX: 13.6; radiusZ: 12.4; segments: 52; height: 6.2; thickness: 1.10; y: 2.8; layers: 2; overlap: 1.60; openStart: 352; openEnd: 8"></a-entity>
+              collider-ring="center: 0 0 38.7; radiusX: 13.6; radiusZ: 12.4; segments: 52; height: 6.2; thickness: 1.10; y: 2.8; layers: 2; overlap: 1.60; openRanges: 352-8,170-190"></a-entity>
   </a-entity>
 
 
@@ -11951,29 +12850,368 @@ AFRAME.registerComponent('seam-grain-fringe', {
     </a-entity>
 </a-entity>
 
-<!-- Portal merge colliders (WORLD-aligned frame around the opening).
-     These are outside the rotated anchor so they don't inherit rotation. -->
-<a-entity id="portal_merge_colliders">
-  <!-- Frame in the YZ plane at x = 13.60 (inner radius 1.25, outer radius 3.25) -->
-  <a-box id="portal_merge_col_left" class="collider" visible="false"
-         width="1.20" height="6.50" depth="2.00"
-         position="13.60 1.20 40.95"></a-box>
 
-  <a-box id="portal_merge_col_right" class="collider" visible="false"
-         width="1.20" height="6.50" depth="2.00"
-         position="13.60 1.20 36.45"></a-box>
+  <!-- ============================================================
+       TUNNEL_02 (STEP 1): Aya dome ↔ future sphere_dome connector
+       - Shorter sibling of tunnel_01
+       - Includes full wall thickness (inner + outer shells)
+       - Includes merge dressing at aya_dome side
+       - DOES NOT yet connect to sphere_dome (added in next step)
+       ============================================================ -->
 
-  <!-- IMPORTANT: do not place a collider slab across X at the portal plane; rig-walk ignores Y and it will block passage. -->
+  <!-- Clip reference for the aya_dome_shell opening (shader discard; lightweight) -->
+  <a-entity id="tunnel_02_cutref" position="-9.40 1.20 38.70" rotation="0 0 0"></a-entity>
+
+  <!-- Aya-side merge dressing for tunnel_02 (mirrors tunnel_01 merge style) -->
+  <a-entity id="merge_portal_anchor_02"
+            position="-9.40 1.20 38.70"
+            rotation="0 90 0">
+
+    <!-- Thin face ring (helps hide any pixel-level cut jaggies at grazing angles) -->
+    <a-ring id="dome2_portal_face"
+            radius-inner="1.25" radius-outer="1.33"
+            position="0 0 0.08"
+            organic-ring-edge="inner: 1.25; outer: 1.33; amp: 0.035; freq: 11.0; seed: 191"
+            material="shader: standard; color: #ffffff; src: #moonDiffuse; normalMap: #moonNormal; roughnessMap: #moonRough; aoMap: #moonAO; metalness: 0; roughness: 1; repeat: 10 7; normalScale: 0.9 0.9; side: double; aoMapIntensity: 0.25; emissive: #0f0f0f; emissiveIntensity: 0.08"
+            shadow="cast:false; receive:true" uv2-from-uv></a-ring>
+
+    <!-- Seam blend collar (soft tube that bridges dome wall → tunnel opening) -->
+    <a-entity id="dome2_portal_blend_collar"
+              geometry="primitive: cylinder; radius: 1.31; height: 0.36; openEnded: true; segmentsRadial: 96; segmentsHeight: 1"
+              rotation="90 0 0"
+              position="0 0 -0.02"
+              cave-displace="amp: 0.06; freq: 2.40; macroFreq: 0.32; macroAmp: 0.18; seed: 218; oct: 3; lac: 2.05; gain: 0.55"
+              material="shader: standard; color: #ffffff; src: #moonDiffuse; normalMap: #moonNormal; roughnessMap: #moonRough; aoMap: #moonAO; metalness: 0; roughness: 1; repeat: 10 7; normalScale: 0.9 0.9; side: double; polygonOffset: true; polygonOffsetFactor: 2; polygonOffsetUnits: 2; aoMapIntensity: 0.25; emissive: #0f0f0f; emissiveIntensity: 0.08"
+              shadow="cast:false; receive:true" uv2-from-uv></a-entity>
+
+    <!-- Cosmetic fillet (rounded edge) to soften the hard cut) -->
+    <a-entity id="dome2_portal_fillet"
+              geometry="primitive: torus; radius: 1.34; radiusTubular: 0.09; segmentsRadial: 24; segmentsTubular: 160"
+              position="0 0 0.05"
+              scale="1 1 0.75"
+              organic-rim="amp: 0.03; freq: 9.0; seed: 201; zAmp: 0.015"
+              material="shader: standard; color: #ffffff; src: #moonDiffuse; normalMap: #moonNormal; roughnessMap: #moonRough; aoMap: #moonAO; metalness: 0; roughness: 1; repeat: 10 7; normalScale: 0.9 0.9; side: double; aoMapIntensity: 0.25; emissive: #0f0f0f; emissiveIntensity: 0.08"
+              shadow="cast:false; receive:true" uv2-from-uv></a-entity>
+
+    <!-- Seam cover mound (hides floor join at the mouth) -->
+    <a-entity id="sand2_seam_mound"
+              position="0 -1.18 0"
+              geometry="primitive: sphere; radius: 1; segmentsWidth: 44; segmentsHeight: 24"
+              scale="1.35 0.18 2.55"
+              cave-displace="amp: 0.050; maxDown: 0.028; freq: 2.10; macroFreq: 0.33; macroAmp: 0.20; seed: 2107; oct: 4; lac: 2.06; gain: 0.54"
+              material="shader: standard; color: #ffffff; src: #groundDiffuse; normalMap: #groundNormal; roughnessMap: #groundRough; metalness: 0; roughness: 1; repeat: 7 5; normalScale: 1 1; side: front; polygonOffset: true; polygonOffsetFactor: -1; polygonOffsetUnits: -1"
+              shadow="cast:false; receive:true" uv2-from-uv></a-entity>
+
+  </a-entity>
+
+
+  <!-- Tunnel_02 geometry (axis along -X; near mouth at x=-13.60, far mouth at x=-27.60) -->
+  <a-entity id="tunnel_02" position="3.7 0 0">
+
+    <!-- Inner walkable shell (visible from inside) -->
+    <a-entity id="tunnel_02_shell_inner"
+              geometry="primitive: cylinder; radius: 1.25; height: 14; openEnded: true; segmentsRadial: 64; segmentsHeight: 1"
+              rotation="0 0 90"
+              position="-20.10 1.20 38.70"
+              material="shader: standard; color: #ffffff; src: #moonDiffuse; normalMap: #moonNormal; roughnessMap: #moonRough; aoMap: #moonAO; metalness: 0; roughness: 1; repeat: 10 7; normalScale: 0.9 0.9; side: back"
+              shadow="cast:false; receive:true"
+              uv2-from-uv></a-entity>
+
+    <!-- Outer mass shell (represents ~2m thickness outside) -->
+    <a-entity id="tunnel_02_shell_outer"
+              geometry="primitive: cylinder; radius: 3.25; height: 14; openEnded: true; segmentsRadial: 64; segmentsHeight: 1"
+              rotation="0 0 90"
+              position="-20.10 1.20 38.70"
+              material="shader: standard; color: #ffffff; src: #moonDiffuse; normalMap: #moonNormal; roughnessMap: #moonRough; aoMap: #moonAO; metalness: 0; roughness: 1; repeat: 10 7; normalScale: 0.9 0.9; side: front"
+              shadow="cast:false; receive:false"
+              uv2-from-uv></a-entity>
+
+    <!-- Mouth rims (flat cut faces) -->
+    <a-ring id="tunnel_02_rim_near"
+            radius-inner="1.25" radius-outer="3.25"
+            position="-13.10 1.20 38.70"
+            rotation="0 90 0"
+            material="shader: standard; color: #ffffff; src: #moonDiffuse; normalMap: #moonNormal; roughnessMap: #moonRough; aoMap: #moonAO; metalness: 0; roughness: 1; repeat: 4 4; normalScale: 0.9 0.9; side: double"
+            shadow="cast:false; receive:true"
+            uv2-from-uv></a-ring>
+
+    <a-ring id="tunnel_02_rim_far"
+            radius-inner="1.25" radius-outer="3.25"
+            position="-27.10 1.20 38.70"
+            rotation="0 90 0"
+            material="shader: standard; color: #ffffff; src: #moonDiffuse; normalMap: #moonNormal; roughnessMap: #moonRough; aoMap: #moonAO; metalness: 0; roughness: 1; repeat: 4 4; normalScale: 0.9 0.9; side: double"
+            shadow="cast:false; receive:true"
+            uv2-from-uv></a-ring>
+
+    <!-- Sphere-side portal rim dressing (copied from the other end style for thickness/legibility) -->
+    <a-entity id="sphere_dome_portal_rim_anchor"
+              position="-27.10 1.20 38.70"
+              rotation="0 90 0">
+
+      <!-- Thin face ring to hide cut seam -->
+      <a-ring id="sphere_dome_portal_face"
+                radius-inner="1.25" radius-outer="1.33"
+                position="0 0 -0.02"
+                organic-ring-edge="inner: 1.25; outer: 1.33; amp: 0.035; freq: 11.0; seed: 91"
+                material="shader: standard; color: #ffffff; src: #moonDiffuse; normalMap: #moonNormal; roughnessMap: #moonRough; aoMap: #moonAO; metalness: 0; roughness: 1; repeat: 10 7; normalScale: 0.9 0.9; side: double; aoMapIntensity: 0.25; emissive: #0f0f0f; emissiveIntensity: 0.08"
+                shadow="cast:false; receive:true" uv2-from-uv></a-ring>
+
+      <!-- Blend collar to give the rim thickness (prevents a thin/flat read) -->
+<!-- Inner fillet ring to soften the lip -->
+      <a-entity id="sphere_dome_portal_fillet_ring"
+                geometry="primitive: torus; radius: 1.28; radiusTubular: 0.055; segmentsRadial: 24; segmentsTubular: 160" rotation="0 0 0"
+                position="0 -0.03 0.00"
+                scale="1 1 0.45"
+                organic-rim="amp: 0.015; freq: 9.0; seed: 101; zAmp: 0.008"
+                material="shader: standard; color: #ffffff; src: #moonDiffuse; normalMap: #moonNormal; roughnessMap: #moonRough; aoMap: #moonAO; metalness: 0; roughness: 1; repeat: 10 7; normalScale: 0.9 0.9; side: double; aoMapIntensity: 0.25; emissive: #0f0f0f; emissiveIntensity: 0.08"
+                shadow="cast:false; receive:true" uv2-from-uv></a-entity>
+
+    </a-entity>
+
+
+    <!-- Tunnel_02 wall colliders (prevent walking through the tube walls) -->
+    <a-entity id="tunnel_02_wall_colliders">
+      <a-box class="collider" visible="false" width="15.0" height="6.0" depth="0.4" position="-20.10 2.40 39.80"></a-box>
+      <a-box class="collider" visible="false" width="15.0" height="6.0" depth="0.4" position="-20.10 2.40 37.60"></a-box>
+    </a-entity>
+
+    <!-- Tunnel sand continuation (organic, volumetric) -->
+    <a-entity id="tunnel_02_floor"
+        geometry="primitive: tunnel-solid; width: 13.90; height: 4.0; segmentsWidth: 160; segmentsHeight: 44; thickness: 0.25; maxHeight: 0.18; baseHalfWidth: 1.10; widthVar: 0.65; edgeFeather: 0.45; centerShift: 0.42; noiseAmp: 0.10; seed: 2337"
+        rotation="-90 0 0"
+        position="-20.10 0.10 38.70"
+        material="shader: standard; color: #ffffff; src: #groundDiffuse; normalMap: #groundNormal; aoMap: #groundAO; metalness: 0; roughness: 1; repeat: 6 6; normalScale: 1 1; side: double"
+        shadow="cast:false; receive:true"
+        uv2-from-uv></a-entity>
+
+    <!-- Tunnel black rocks (procedural; lightweight; no collisions) -->
+    <a-entity id="tunnel_02_floor_rocks"
+              position="0 0 0"
+              tunnel-rubble-scatter="xStart: -26.65; xEnd: -13.55; zCenter: 38.70; zHalfWidth: 0.78; y: 0.040; yJitter: 0.026; bandWidth: 0.28; edgeInset: 0.28; count: 14; heroCount: 2; seed: 371; patchCenters: -22.60, -17.70; patchSpread: 0.70; gap: 0.03; scaleMin: 0.045; scaleMax: 0.112; heroScaleMin: 0.120; heroScaleMax: 0.175; color1: #1a1a1a; color2: #2a2a2a; roughness: 0.56; metalness: 0.02; envIntensity: 0.75"></a-entity>
+
+    <!-- Tunnel lighting: two dome-style mercurial torches -->
+    <a-entity id="torch_tunnel02_L1" class="torchAnchor"
+              position="-17.70 1.65 37.45"
+              rotation="0 180 0"
+              shadow="cast:false; receive:false"
+              mercury-sinuous-driver>
+      <a-entity id="torch_tunnel02_L1_rods">
+        <a-cylinder radius="0.0036" height="0.34" rotation="90 0 0" position="0.0914 0.0914 -0.17"
+                    material="shader: standard; src:#elevMetalColor; normalMap:#elevMetalNormal; roughnessMap:#elevMetalRough; metalnessMap:#elevMetalMetal; metalness:1; roughness:0.40;"></a-cylinder>
+        <a-cylinder radius="0.0036" height="0.34" rotation="90 0 0" position="-0.0914 0.0914 -0.17"
+                    material="shader: standard; src:#elevMetalColor; normalMap:#elevMetalNormal; roughnessMap:#elevMetalRough; metalnessMap:#elevMetalMetal; metalness:1; roughness:0.40;"></a-cylinder>
+        <a-cylinder radius="0.0036" height="0.34" rotation="90 0 0" position="0.0914 -0.0914 -0.17"
+                    material="shader: standard; src:#elevMetalColor; normalMap:#elevMetalNormal; roughnessMap:#elevMetalRough; metalnessMap:#elevMetalMetal; metalness:1; roughness:0.40;"></a-cylinder>
+        <a-cylinder radius="0.0036" height="0.34" rotation="90 0 0" position="-0.0914 -0.0914 -0.17"
+                    material="shader: standard; src:#elevMetalColor; normalMap:#elevMetalNormal; roughnessMap:#elevMetalRough; metalnessMap:#elevMetalMetal; metalness:1; roughness:0.40;"></a-cylinder>
+      </a-entity>
+      <a-box id="torch_tunnel02_L1_base" width="0.19" height="0.19" depth="0.08" position="0 0 -0.38"
+             material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1.0; roughness: 0.48;"></a-box>
+      <a-entity id="torch_tunnel02_L1_capsule" position="0 0 -0.17">
+        <a-entity id="torch_tunnel02_L1_glass_outer">
+          <a-plane width="0.34" height="0.1756" position="-0.0878 0 0" rotation="0 90 0"
+                   material="shader: standard; color:#ffffff; metalness:0; roughness:0.06; transparent:true; opacity:0.18; side:double; envMapIntensity:1.0;"
+                   torch-glass="roughness:0.06; thickness:0.05; envIntensity:2.4; attenuationDistance:3.0" glass-depthfix></a-plane>
+          <a-plane width="0.34" height="0.1756" position="0.0878 0 0" rotation="0 -90 0"
+                   material="shader: standard; color:#ffffff; metalness:0; roughness:0.06; transparent:true; opacity:0.18; side:double; envMapIntensity:1.0;"
+                   torch-glass="roughness:0.06; thickness:0.05; envIntensity:2.4; attenuationDistance:3.0" glass-depthfix></a-plane>
+          <a-plane width="0.1756" height="0.34" position="0 0.0878 0" rotation="-90 0 0"
+                   material="shader: standard; color:#ffffff; metalness:0; roughness:0.06; transparent:true; opacity:0.18; side:double; envMapIntensity:1.0;"
+                   torch-glass="roughness:0.06; thickness:0.05; envIntensity:2.4; attenuationDistance:3.0" glass-depthfix></a-plane>
+          <a-plane width="0.1756" height="0.34" position="0 -0.0878 0" rotation="90 0 0"
+                   material="shader: standard; color:#ffffff; metalness:0; roughness:0.06; transparent:true; opacity:0.18; side:double; envMapIntensity:1.0;"
+                   torch-glass="roughness:0.06; thickness:0.05; envIntensity:2.4; attenuationDistance:3.0" glass-depthfix></a-plane>
+        </a-entity>
+        <a-entity id="torch_tunnel02_L1_glass_inner">
+          <a-plane width="0.34" height="0.1636" position="-0.0818 0 0" rotation="0 90 0"
+                   material="shader: standard; color:#ffffff; metalness:0; roughness:0.02; transparent:true; opacity:0.07; side:double; envMapIntensity:1.0;"
+                   torch-glass="roughness:0.03; thickness:0.02; envIntensity:2.0; attenuationDistance:3.0" glass-depthfix></a-plane>
+          <a-plane width="0.34" height="0.1636" position="0.0818 0 0" rotation="0 -90 0"
+                   material="shader: standard; color:#ffffff; metalness:0; roughness:0.02; transparent:true; opacity:0.07; side:double; envMapIntensity:1.0;"
+                   torch-glass="roughness:0.03; thickness:0.02; envIntensity:2.0; attenuationDistance:3.0" glass-depthfix></a-plane>
+          <a-plane width="0.1636" height="0.34" position="0 0.0818 0" rotation="-90 0 0"
+                   material="shader: standard; color:#ffffff; metalness:0; roughness:0.02; transparent:true; opacity:0.07; side:double; envMapIntensity:1.0;"
+                   torch-glass="roughness:0.03; thickness:0.02; envIntensity:2.0; attenuationDistance:3.0" glass-depthfix></a-plane>
+          <a-plane width="0.1636" height="0.34" position="0 -0.0818 0" rotation="90 0 0"
+                   material="shader: standard; color:#ffffff; metalness:0; roughness:0.02; transparent:true; opacity:0.07; side:double; envMapIntensity:1.0;"
+                   torch-glass="roughness:0.03; thickness:0.02; envIntensity:2.0; attenuationDistance:3.0" glass-depthfix></a-plane>
+        </a-entity>
+        <a-entity id="torch_tunnel02_L1_flame" position="0 0 -0.04" futuristic-flame="radius: 0.065; height: 0.14; hue: 205; intensity: 1.65"></a-entity>
+        <a-entity id="torch_tunnel02_L1_flame_projLight" position="0 0 -0.18"
+                  light="type: point; color: #d9f1ff; intensity: 0.62; distance: 7.2; decay: 2.0; castShadow: false"
+                  animation__flicker="property: light.intensity; dir: alternate; dur: 170; easing: easeInOutSine; loop: true; from: 0.50; to: 0.74"></a-entity>
+</a-entity>
 </a-entity>
 
+    <a-entity id="torch_tunnel02_L2" class="torchAnchor"
+              position="-22.60 1.65 39.95"
+              rotation="0 0 0"
+              shadow="cast:false; receive:false"
+              mercury-sinuous-driver>
+      <a-entity id="torch_tunnel02_L2_rods">
+        <a-cylinder radius="0.0036" height="0.34" rotation="90 0 0" position="0.0914 0.0914 -0.17"
+                    material="shader: standard; src:#elevMetalColor; normalMap:#elevMetalNormal; roughnessMap:#elevMetalRough; metalnessMap:#elevMetalMetal; metalness:1; roughness:0.40;"></a-cylinder>
+        <a-cylinder radius="0.0036" height="0.34" rotation="90 0 0" position="-0.0914 0.0914 -0.17"
+                    material="shader: standard; src:#elevMetalColor; normalMap:#elevMetalNormal; roughnessMap:#elevMetalRough; metalnessMap:#elevMetalMetal; metalness:1; roughness:0.40;"></a-cylinder>
+        <a-cylinder radius="0.0036" height="0.34" rotation="90 0 0" position="0.0914 -0.0914 -0.17"
+                    material="shader: standard; src:#elevMetalColor; normalMap:#elevMetalNormal; roughnessMap:#elevMetalRough; metalnessMap:#elevMetalMetal; metalness:1; roughness:0.40;"></a-cylinder>
+        <a-cylinder radius="0.0036" height="0.34" rotation="90 0 0" position="-0.0914 -0.0914 -0.17"
+                    material="shader: standard; src:#elevMetalColor; normalMap:#elevMetalNormal; roughnessMap:#elevMetalRough; metalnessMap:#elevMetalMetal; metalness:1; roughness:0.40;"></a-cylinder>
+      </a-entity>
+      <a-box id="torch_tunnel02_L2_base" width="0.19" height="0.19" depth="0.08" position="0 0 -0.38"
+             material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1.0; roughness: 0.48;"></a-box>
+      <a-entity id="torch_tunnel02_L2_capsule" position="0 0 -0.17">
+        <a-entity id="torch_tunnel02_L2_glass_outer">
+          <a-plane width="0.34" height="0.1756" position="-0.0878 0 0" rotation="0 90 0"
+                   material="shader: standard; color:#ffffff; metalness:0; roughness:0.06; transparent:true; opacity:0.18; side:double; envMapIntensity:1.0;"
+                   torch-glass="roughness:0.06; thickness:0.05; envIntensity:2.4; attenuationDistance:3.0" glass-depthfix></a-plane>
+          <a-plane width="0.34" height="0.1756" position="0.0878 0 0" rotation="0 -90 0"
+                   material="shader: standard; color:#ffffff; metalness:0; roughness:0.06; transparent:true; opacity:0.18; side:double; envMapIntensity:1.0;"
+                   torch-glass="roughness:0.06; thickness:0.05; envIntensity:2.4; attenuationDistance:3.0" glass-depthfix></a-plane>
+          <a-plane width="0.1756" height="0.34" position="0 0.0878 0" rotation="-90 0 0"
+                   material="shader: standard; color:#ffffff; metalness:0; roughness:0.06; transparent:true; opacity:0.18; side:double; envMapIntensity:1.0;"
+                   torch-glass="roughness:0.06; thickness:0.05; envIntensity:2.4; attenuationDistance:3.0" glass-depthfix></a-plane>
+          <a-plane width="0.1756" height="0.34" position="0 -0.0878 0" rotation="90 0 0"
+                   material="shader: standard; color:#ffffff; metalness:0; roughness:0.06; transparent:true; opacity:0.18; side:double; envMapIntensity:1.0;"
+                   torch-glass="roughness:0.06; thickness:0.05; envIntensity:2.4; attenuationDistance:3.0" glass-depthfix></a-plane>
+        </a-entity>
+        <a-entity id="torch_tunnel02_L2_glass_inner">
+          <a-plane width="0.34" height="0.1636" position="-0.0818 0 0" rotation="0 90 0"
+                   material="shader: standard; color:#ffffff; metalness:0; roughness:0.02; transparent:true; opacity:0.07; side:double; envMapIntensity:1.0;"
+                   torch-glass="roughness:0.03; thickness:0.02; envIntensity:2.0; attenuationDistance:3.0" glass-depthfix></a-plane>
+          <a-plane width="0.34" height="0.1636" position="0.0818 0 0" rotation="0 -90 0"
+                   material="shader: standard; color:#ffffff; metalness:0; roughness:0.02; transparent:true; opacity:0.07; side:double; envMapIntensity:1.0;"
+                   torch-glass="roughness:0.03; thickness:0.02; envIntensity:2.0; attenuationDistance:3.0" glass-depthfix></a-plane>
+          <a-plane width="0.1636" height="0.34" position="0 0.0818 0" rotation="-90 0 0"
+                   material="shader: standard; color:#ffffff; metalness:0; roughness:0.02; transparent:true; opacity:0.07; side:double; envMapIntensity:1.0;"
+                   torch-glass="roughness:0.03; thickness:0.02; envIntensity:2.0; attenuationDistance:3.0" glass-depthfix></a-plane>
+          <a-plane width="0.1636" height="0.34" position="0 -0.0818 0" rotation="90 0 0"
+                   material="shader: standard; color:#ffffff; metalness:0; roughness:0.02; transparent:true; opacity:0.07; side:double; envMapIntensity:1.0;"
+                   torch-glass="roughness:0.03; thickness:0.02; envIntensity:2.0; attenuationDistance:3.0" glass-depthfix></a-plane>
+        </a-entity>
+        <a-entity id="torch_tunnel02_L2_flame" position="0 0 -0.04" futuristic-flame="radius: 0.065; height: 0.14; hue: 205; intensity: 1.65"></a-entity>
+        <a-entity id="torch_tunnel02_L2_flame_projLight" position="0 0 -0.18"
+                  light="type: point; color: #d9f1ff; intensity: 0.62; distance: 7.2; decay: 2.0; castShadow: false"
+                  animation__flicker="property: light.intensity; dir: alternate; dur: 170; easing: easeInOutSine; loop: true; from: 0.50; to: 0.74"></a-entity>
+</a-entity>
+</a-entity>
 
+  </a-entity>
+
+  <!-- Aya dome ↔ tunnel_02 merge dressing (seam blend collar + fillet + sand mound). Purely visual. -->
+  
+
+
+  <!-- ============================================================
+       SPHERE_DOME (STEP 1): New dome at the end of tunnel_02
+       - Slightly smaller than aya_dome
+       - Uses the same PBR style (moon rock shell + sand floor)
+       - Aligned/merged to the far mouth of tunnel_02
+       - Temporary bright light in the center for integration checks
+       ============================================================ -->
+
+  <a-entity id="sphere_dome_import"
+            merge-align="from: #sphere_dome_portal_anchor; to: #tunnel_02_rim_far; positionOnly: true">
+
+    <!-- Anchor at the tunnel_02 far mouth (local), used for merge-align -->
+    <a-entity id="sphere_dome_portal_anchor" position="0 1.20 0" rotation="0 90 0"></a-entity>
+
+    <!-- Clip reference: cylindrical cut through the shell (axis = local X) -->
+    <a-entity id="sphere_dome_cutref" position="0 1.20 0" rotation="0 0 0"></a-entity>
+    <!-- Added: seam fillet mound to soften tunnel_02 ↔ sphere_dome floor transition (no transparency, no pop-in) -->
+    <a-entity id="sphere_dome_portal_fillet"
+              geometry="primitive: sphere; radius: 1; segmentsWidth: 64; segmentsHeight: 48"
+              position="-1.10 0.02 0"
+              rotation="0 0 0"
+              scale="2.45 0.22 2.05"
+              cave-displace="amp: 0.040; maxDown: 0.018; freq: 2.05; macroFreq: 0.30; macroAmp: 0.22; seed: 512; oct: 3; lac: 2.04; gain: 0.54"
+              material="shader: standard; color: #ffffff; src: #groundDiffuse; normalMap: #groundNormal; aoMap: #groundAO; roughnessMap: #groundRough; metalness: 0; roughness: 1; repeat: 6 6; normalScale: 1 1; side: front; polygonOffset: true; polygonOffsetFactor: -3; polygonOffsetUnits: -3"
+              shadow="cast:false; receive:true"
+              uv2-from-uv></a-entity>
+
+    <!-- Sphere dome floor (simple for now: same PBR as aya_dome_sand_floor) -->
+    <!-- Sphere dome floor (PBR-matched to aya_dome, but with geometry segments for softer integration) -->
+    <a-entity id="sphere_dome_floor"
+              geometry="primitive: plane; width: 34; height: 34; segmentsWidth: 240; segmentsHeight: 240"
+              position="-9.40 0.000 0"
+              rotation="-90 0 0"
+              cave-displace="amp: 0.030; maxDown: 0.016; freq: 1.55; macroFreq: 0.25; macroAmp: 0.18; seed: 4101; oct: 3; lac: 2.05; gain: 0.55"
+              material="shader: standard; color: #ffffff; src: #groundDiffuse; normalMap: #groundNormal; aoMap: #groundAO; roughnessMap: #groundRough; metalness: 0; roughness: 1; repeat: 6 6; normalScale: 1 1; side: front; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"
+              shadow="cast:false; receive:true"
+              uv2-from-uv></a-entity>
+
+    <!-- Sphere dome shell (same style as aya_dome_shell, slightly smaller) -->
+    <a-entity id="sphere_dome_shell"
+              position="-9.40 3.35 0"
+              rotation="0 92 0"
+              thick-dome-shell="radius: 11.1;
+                                innerScale: 1.15 0.68 1.05;
+                                outerScale: 1.19 0.71 1.09;
+                                thetaLength: 132;
+                                widthSegments: 160;
+                                heightSegments: 120;
+                                diffuse: #moonDiffuse;
+                                normal: #moonNormal;
+                                rough: #moonRough;
+                                ao: #moonAO;
+                                repeat: 14 10;
+                                normalScale: 0.95 0.95;
+                                displaceAmp: 0.52;
+                                displaceFreq: 1.62;
+                                macroAmp: 0.80;
+                                macroFreq: 0.28;
+                                seed: 41;
+                                octaves: 4;
+                                lacunarity: 2.05;
+                                gain: 0.52"
+              cylindrical-clip="target: #sphere_dome_cutref; radius: 1.34; halfLength: 4.20"></a-entity>
+
+    <!-- Sphere dome boundary colliders (prevent walking through the shell). Opening toward tunnel (+X). -->
+    <a-entity id="sphere_dome_colliders"
+              collider-ring="center: -9.40 0 0; radiusX: 11.25; radiusZ: 10.70; segments: 72; height: 9.0; thickness: 1.15; y: 4.20; layers: 2; overlap: 1.60; openRanges: 350-10"></a-entity>
+
+    <!-- Floating light sphere (moved from aya_dome; scaled 0.25 for smaller sphere_dome). -->
+    <!-- NOTE: This is the ONLY light source inside sphere_dome (beams + core). Keep light ranges tight for performance. -->
+    <a-entity id="sphere_dome_floating_sphere"
+              position="-9.40 3.85 0"
+              scale="0.25 0.25 0.25"
+              shadow="cast:false; receive:false"
+              sin-bob="baseY: 3.85; amp: 0.07; speed: 0.05"
+              spin="speed: 1.35; axis: y"
+              perforated-sphere-light="radius: 1.52; holes: 77; holeMode: none; holeSize: 0.0040; beamMin: 4.8; beamMax: 80; beamRadius: 0.012; baseOpacity: 0.16; blue: #7cc9ff; white: #ffffff; flicker: 1.25; wobble: 0.085; innerFrac: 0.40; spillBoost: 1.35; glowBoost: 1.15; lightCount: 0; lightAngle: 0.10; lightReach: 26; impactReach: 48; impactDots: false">
+      <a-entity id="beam_dust" beam-dust></a-entity>
+      <!-- Visible core (spherical flame like the torches, but stronger) -->
+      <a-entity id="sphere_core_flame"
+                position="0 0 0"
+                futuristic-flame="radius: 0.54; height: 0.92; hue: 205; intensity: 7.0"
+                animation__core_pulse="property: scale; dir: alternate; dur: 2200; easing: easeInOutSine; loop: true; to: 1.06 1.06 1.06"></a-entity>
+      <!-- Sphere shell (single mesh + shader gap; stable silhouette from all angles) -->
+      <a-entity id="sphere_shell"
+                geometry="primitive: sphere; radius: 1.52; segmentsWidth: 72; segmentsHeight: 54"
+                position="0 0 0"
+                material="shader: standard; src: #metalElevatorColor; normalMap: #metalElevatorNormal; roughnessMap: #metalElevatorRough; metalnessMap: #metalElevatorMetalness; displacementMap: #metalElevatorDisplacement; repeat: 1 1; metalness: 1; roughness: 0.35; displacementScale: 0.03; displacementBias: 0; emissive: #000000; emissiveIntensity: 0; side: double"
+                pool-sheen-fresnel="color: #a8e5ff; intensity: 0.55; fresnelPower: 3.4; radius: 1.52"
+                render-order="value: 20"></a-entity>
+
+    </a-entity>
+
+    <!-- Sphere collision: prevents walking through the floating sphere volume -->
+    <a-cylinder id="sphere_dome_sphere_collider" class="collider" visible="false"
+                radius="0.39" height="2.0" position="-9.40 3.85 0"></a-cylinder>
+
+
+    <!-- Minimal mouth dressing (inside the new dome) to soften the cut edge -->
+    <a-entity id="sphere_dome_mouth_dressing" position="0 1.20 0" rotation="0 90 0">
+</a-entity>
+
+  </a-entity>
 <!-- ===== Imported room: dome_tunnel.html (dome + elevator + tunnel) ===== -->
   <a-entity id="dome_tunnel_import"
             rotation="0 180 0"
             merge-align="from: #tunnel_01_rim_far; to: #merge_portal_anchor; positionOnly: true">
 <!-- Minimal lighting so you can see the elevator -->
-    <a-entity light="type: hemisphere; intensity: 0.03; color: #cfe9ff; groundColor: #070a0e"></a-entity>
-    <a-entity light="type: ambient; color: #0b1220; intensity: 0.01"></a-entity>
+    <a-entity light="type: hemisphere; intensity: 0.015; color: #cfe9ff; groundColor: #070a0e"></a-entity>
+    <a-entity light="type: ambient; color: #0b1220; intensity: 0.012"></a-entity>
     
 
     <!-- Simple floor for orientation -->
@@ -12070,21 +13308,21 @@ AFRAME.registerComponent('seam-grain-fringe', {
         <a-entity id="cave_backwall_L"
                   geometry="primitive: plane; width: 4.88; height: 5.60"
                   position="-3.56 2.80 0.49"
-                  material="shader: standard; color: #ffffff; src: #moonDiffuse; normalMap: #moonNormal; roughnessMap: #moonRough; aoMap: #moonAO; metalness: 0; roughness: 1; repeat: 7 4; normalScale: 0.9 0.9"
+                  material="shader: standard; color: #ffffff; src: #moonDiffuse; normalMap: #moonNormal; roughnessMap: #moonRough; aoMap: #moonAO; metalness: 0; roughness: 1; repeat: 14 10; normalScale: 0.9 0.9; aoMapIntensity: 0.25"
                   shadow="cast:false; receive:true"
                   uv2-from-uv></a-entity>
 
         <a-entity id="cave_backwall_R"
                   geometry="primitive: plane; width: 4.88; height: 5.60"
                   position="3.56 2.80 0.49"
-                  material="shader: standard; color: #ffffff; src: #moonDiffuse; normalMap: #moonNormal; roughnessMap: #moonRough; aoMap: #moonAO; metalness: 0; roughness: 1; repeat: 7 4; normalScale: 0.9 0.9"
+                  material="shader: standard; color: #ffffff; src: #moonDiffuse; normalMap: #moonNormal; roughnessMap: #moonRough; aoMap: #moonAO; metalness: 0; roughness: 1; repeat: 14 10; normalScale: 0.9 0.9; aoMapIntensity: 0.25"
                   shadow="cast:false; receive:true"
                   uv2-from-uv></a-entity>
 
         <a-entity id="cave_backwall_T"
                   geometry="primitive: plane; width: 2.24; height: 2.90"
                   position="0 4.15 0.49"
-                  material="shader: standard; color: #ffffff; src: #moonDiffuse; normalMap: #moonNormal; roughnessMap: #moonRough; aoMap: #moonAO; metalness: 0; roughness: 1; repeat: 7 4; normalScale: 0.9 0.9"
+                  material="shader: standard; color: #ffffff; src: #moonDiffuse; normalMap: #moonNormal; roughnessMap: #moonRough; aoMap: #moonAO; metalness: 0; roughness: 1; repeat: 14 10; normalScale: 0.9 0.9; aoMapIntensity: 0.25"
                   shadow="cast:false; receive:true"
                   uv2-from-uv></a-entity>
 
@@ -12302,7 +13540,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
           tunnel-rubble-scatter="xStart: 4.40; xEnd: 23.30; zCenter: 2.00; zHalfWidth: 0.78; y: 0.040; yJitter: 0.026; bandWidth: 0.28; edgeInset: 0.28; count: 20; heroCount: 2; seed: 271; patchCenters: 8.40, 18.60; patchSpread: 0.75; gap: 0.03; scaleMin: 0.045; scaleMax: 0.115; heroScaleMin: 0.120; heroScaleMax: 0.180; color1: #1a1a1a; color2: #2a2a2a; roughness: 0.56; metalness: 0.02; envIntensity: 0.75"></a-entity>
 
 <!-- Tunnel lighting: dome-style mercurial torches -->
-  <a-entity id="torch_tunnel_L1"
+  <a-entity id="torch_tunnel_L1" class="torchAnchor"
                 position="8.40 1.65 0.75"
                 rotation="0 180 0"
                 shadow="cast:false; receive:false"
@@ -12381,28 +13619,17 @@ AFRAME.registerComponent('seam-grain-fringe', {
           <!-- Futuristic flame core (visible) -->
           <a-entity id="torch_tunnel_L1_flame" position="0 0 -0.04"
               futuristic-flame="radius: 0.065; height: 0.14; hue: 205; intensity: 1.65"></a-entity>
-  
+        <a-entity id="torch_tunnel_L1_flame_projLight" position="0 0 -0.18"
+                  light="type: point; color: #d9f1ff; intensity: 0.62; distance: 6.4; decay: 2.0; castShadow: false"
+                  animation__flicker="property: light.intensity; dir: alternate; dur: 170; easing: easeInOutSine; loop: true; from: 0.50; to: 0.74"></a-entity>
           <!-- Internal light (centered in glass) -->
-          <a-entity id="torch_tunnel_L1_light" position="0 0 -0.04"
-              light="type: point; color: #d9f1ff; intensity: 0.70; distance: 4.5; decay: 2.0; castShadow: false"
-              torch-flicker="base: 0.62; amp: 0.10"></a-entity>
-        </a-entity>
+</a-entity>
   
   <!-- Internal light (between wall and plate) -->
-          <a-entity id="torch_tunnel_L1_light_mount" position="0 0 0"
-                    light="type: point; color: #d9f1ff; intensity: 0.95; distance: 5.5; decay: 2.0; castShadow: false"
-                    torch-flicker="base: 0.85; amp: 0.14"></a-entity>
-  
-  <!-- Torch key light (motivated, patterned) -->
-  <a-entity id="torch_tunnel_L1_key"
-            position="0 0 -0.12"
-            light="type: spot; color: #d9f1ff; intensity: 5.25; angle: 32; penumbra: 0.78; distance: 9.5; decay: 2.0; castShadow: false;
-                   shadowMapWidth: 2048; shadowMapHeight: 2048; shadowCameraNear: 0.12; shadowCameraFar: 9.5; shadowBias: -0.00018; shadowNormalBias: 0.02; shadowRadius: 3"
-            torch-gobo="speed: 0.85; strength: 1.0; intensityJitter: 0.08"></a-entity>
-  
-  </a-entity>
+<!-- Torch key light (motivated, patterned) -->
+</a-entity>
 
-  <a-entity id="torch_tunnel_L2"
+  <a-entity id="torch_tunnel_L2" class="torchAnchor"
                 position="17.60 1.65 0.75"
                 rotation="0 180 0"
                 shadow="cast:false; receive:false"
@@ -12481,28 +13708,17 @@ AFRAME.registerComponent('seam-grain-fringe', {
           <!-- Futuristic flame core (visible) -->
           <a-entity id="torch_tunnel_L2_flame" position="0 0 -0.04"
               futuristic-flame="radius: 0.065; height: 0.14; hue: 205; intensity: 1.65"></a-entity>
-  
+        <a-entity id="torch_tunnel_L2_flame_projLight" position="0 0 -0.18"
+                  light="type: point; color: #d9f1ff; intensity: 0.62; distance: 6.4; decay: 2.0; castShadow: false"
+                  animation__flicker="property: light.intensity; dir: alternate; dur: 170; easing: easeInOutSine; loop: true; from: 0.50; to: 0.74"></a-entity>
           <!-- Internal light (centered in glass) -->
-          <a-entity id="torch_tunnel_L2_light" position="0 0 -0.04"
-              light="type: point; color: #d9f1ff; intensity: 0.70; distance: 4.5; decay: 2.0; castShadow: false"
-              torch-flicker="base: 0.62; amp: 0.10"></a-entity>
-        </a-entity>
+</a-entity>
   
   <!-- Internal light (between wall and plate) -->
-          <a-entity id="torch_tunnel_L2_light_mount" position="0 0 0"
-                    light="type: point; color: #d9f1ff; intensity: 0.95; distance: 5.5; decay: 2.0; castShadow: false"
-                    torch-flicker="base: 0.85; amp: 0.14"></a-entity>
-  
-  <!-- Torch key light (motivated, patterned) -->
-  <a-entity id="torch_tunnel_L2_key"
-            position="0 0 -0.12"
-            light="type: spot; color: #d9f1ff; intensity: 5.25; angle: 32; penumbra: 0.78; distance: 9.5; decay: 2.0; castShadow: false;
-                   shadowMapWidth: 2048; shadowMapHeight: 2048; shadowCameraNear: 0.12; shadowCameraFar: 9.5; shadowBias: -0.00018; shadowNormalBias: 0.02; shadowRadius: 3"
-            torch-gobo="speed: 0.85; strength: 1.0; intensityJitter: 0.08"></a-entity>
-  
-  </a-entity>
+<!-- Torch key light (motivated, patterned) -->
+</a-entity>
 
-  <a-entity id="torch_tunnel_R1"
+  <a-entity id="torch_tunnel_R1" class="torchAnchor"
                 position="13.00 1.65 3.25"
                 rotation="0 0 0"
                 shadow="cast:false; receive:false"
@@ -12581,26 +13797,15 @@ AFRAME.registerComponent('seam-grain-fringe', {
           <!-- Futuristic flame core (visible) -->
           <a-entity id="torch_tunnel_R1_flame" position="0 0 -0.04"
               futuristic-flame="radius: 0.065; height: 0.14; hue: 205; intensity: 1.65"></a-entity>
-  
+        <a-entity id="torch_tunnel_R1_flame_projLight" position="0 0 -0.18"
+                  light="type: point; color: #d9f1ff; intensity: 0.62; distance: 6.4; decay: 2.0; castShadow: false"
+                  animation__flicker="property: light.intensity; dir: alternate; dur: 170; easing: easeInOutSine; loop: true; from: 0.50; to: 0.74"></a-entity>
           <!-- Internal light (centered in glass) -->
-          <a-entity id="torch_tunnel_R1_light" position="0 0 -0.04"
-              light="type: point; color: #d9f1ff; intensity: 0.70; distance: 4.5; decay: 2.0; castShadow: false"
-              torch-flicker="base: 0.62; amp: 0.10"></a-entity>
-        </a-entity>
+</a-entity>
   
   <!-- Internal light (between wall and plate) -->
-          <a-entity id="torch_tunnel_R1_light_mount" position="0 0 0"
-                    light="type: point; color: #d9f1ff; intensity: 0.95; distance: 5.5; decay: 2.0; castShadow: false"
-                    torch-flicker="base: 0.85; amp: 0.14"></a-entity>
-  
-  <!-- Torch key light (motivated, patterned) -->
-  <a-entity id="torch_tunnel_R1_key"
-            position="0 0 -0.12"
-            light="type: spot; color: #d9f1ff; intensity: 5.25; angle: 32; penumbra: 0.78; distance: 9.5; decay: 2.0; castShadow: false;
-                   shadowMapWidth: 2048; shadowMapHeight: 2048; shadowCameraNear: 0.12; shadowCameraFar: 9.5; shadowBias: -0.00018; shadowNormalBias: 0.02; shadowRadius: 3"
-            torch-gobo="speed: 0.85; strength: 1.0; intensityJitter: 0.08"></a-entity>
-  
-  </a-entity>
+<!-- Torch key light (motivated, patterned) -->
+</a-entity>
   <!-- /Tunnel lighting -->
 
   <!-- Colliders to keep the player inside the tunnel -->
@@ -12642,7 +13847,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
 
 
       <!-- Mercurial wall torch (new, wall-mounted) -->
-    <a-entity id="torch_01"
+    <a-entity id="torch_01" class="torchAnchor"
               position="0 1.65 6.35"
               rotation="0 0 0"
               shadow="cast:false; receive:false"
@@ -12720,34 +13925,21 @@ AFRAME.registerComponent('seam-grain-fringe', {
 
         <!-- Futuristic flame core (visible) -->
         <a-entity id="torch_flame_core" position="0 0 -0.04"
-            futuristic-flame="radius: 0.065; height: 0.14; hue: 205; intensity: 1.65"></a-entity>
-
+            futuristic-flame="radius: 0.065; height: 0.14; hue: 205; intensity: 2.10"></a-entity>
+        <a-entity id="torch_flame_core_projLight" position="0 0 -0.24"
+                  light="type: point; color: #d9f1ff; intensity: 0.92; distance: 10.5; decay: 1.60; castShadow: false"
+                  animation__flicker="property: light.intensity; dir: alternate; dur: 190; easing: easeInOutSine; loop: true; from: 0.80; to: 1.05"></a-entity>
         <!-- Internal light (centered in glass) -->
-        <a-entity id="torch_01_light" position="0 0 -0.04"
-            light="type: point; color: #d9f1ff; intensity: 0.70; distance: 4.5; decay: 2.0; castShadow: false"
-            torch-flicker="base: 0.62; amp: 0.10"></a-entity>
-      </a-entity>
+</a-entity>
 
 <!-- Internal light (between wall and plate) -->
-        <a-entity id="torch_01_light_mount" position="0 0 0"
-                  light="type: point; color: #d9f1ff; intensity: 0.95; distance: 5.5; decay: 2.0; castShadow: false"
-                  torch-flicker="base: 0.85; amp: 0.14"></a-entity>
-
 <!-- Torch key light (motivated, patterned) -->
-<a-entity id="torch_01_key"
-          position="0 0 -0.12"
-          light="type: spot; color: #d9f1ff; intensity: 5.25; angle: 32; penumbra: 0.78; distance: 9.5; decay: 2.0; castShadow: false;
-                 shadowMapWidth: 2048; shadowMapHeight: 2048; shadowCameraNear: 0.12; shadowCameraFar: 9.5; shadowBias: -0.00018; shadowNormalBias: 0.02; shadowRadius: 3"
-          torch-gobo="speed: 0.85; strength: 1.0; intensityJitter: 0.08"></a-entity>
-
 </a-entity>
     </a-entity>
   </a-entity>
 
-
-
-
-    <!-- Player rig (identical rules) -->
+    <!-- Torch V2: single pooled point light (reuses one real light for nearby torch response) -->
+<!-- Player rig (identical rules) -->
     <a-entity id="rig"
               position="36.33 0.03 41.92"
               rotation="0 0 0"
@@ -12766,8 +13958,6 @@ AFRAME.registerComponent('seam-grain-fringe', {
     <a-entity id="aya_seat_experience" aya-seat-experience></a-entity>
 
 </a-scene>
-
-
 
 
 <div id="ayaFullscreenOverlay" aria-hidden="true">
