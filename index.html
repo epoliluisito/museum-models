@@ -2093,6 +2093,34 @@ const far = this.data.avoidDist;
   }
   #elevatorVideoOverlay.fadeIn{ transition: opacity 250ms ease; opacity: 1; }
   #elevatorVideoOverlay.fadeOut{ transition: opacity 450ms ease; opacity: 0; }
+
+
+  /* ----------------------------------------------------------
+     AYA preload iframe (kept invisible until room swap)
+  ----------------------------------------------------------- */
+  #ayaPreloadFrame{
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: #000;
+    z-index: 99998; /* under the fullscreen overlays */
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 600ms ease;
+    display: none; /* becomes block during preload */
+  }
+  #ayaPreloadFrame.preloading{
+    display: block;
+    opacity: 0;
+    pointer-events: none;
+  }
+  #ayaPreloadFrame.show{
+    display: block;
+    opacity: 1;
+    pointer-events: auto;
+  }
 </style>
 
 </head>
@@ -2106,7 +2134,20 @@ const far = this.data.avoidDist;
 <li><strong>Look:</strong> Mouse</li>
 <li><strong>Unlock mouse (optional):</strong> Press <strong>ESC</strong> to release the cursor</li>
 <li><strong>Interact:</strong> Press <span class="keycap">E</span> to activate the elevator</li>
-<li><strong>Elevator:</strong> Press <span class="keycap">E</span> to open/close doors</li>
+<li><strong>Elevator:</strong> Press <span class="keycap">E</span> to open/cl
+
+
+<!-- ===== AYA PRELOAD IFRAME (invisible until swap) ===== -->
+<iframe id="ayaPreloadFrame"
+        title="aya"
+        src="about:blank"
+        data-src="./rooms/aya.dev.html?preload=1"
+        allow="autoplay; fullscreen; xr-spatial-tracking; gamepad; accelerometer; gyroscope"
+        allowfullscreen
+        loading="eager"></iframe>
+<!-- ===== END AYA PRELOAD IFRAME ===== -->
+
+ose doors</li>
 </ul>
 <p class="muted" id="elevatorChoice">By entering the elevator you choose to access the next level.</p>
 <p class="muted">Step back to dismiss this guide.</p>
@@ -5868,6 +5909,71 @@ AFRAME.registerComponent('pbr-carpet', {
 })();
 </script>
 <!-- ===== END INSERTED: Elevator Key Activation + Open Message ===== -->
+<script>
+/* -------------------------------------------------------------------------
+   AYA preloader + seamless swap
+   - Start loading ./rooms/aya.dev.html (in an iframe) during the elevator ride.
+   - Wait for aya.dev.html to signal "READY" before revealing it.
+--------------------------------------------------------------------------- */
+(function () {
+  const FRAME_ID = 'ayaPreloadFrame';
+  const READY_MSG = 'AYA_READY';
+
+  let ayaReady = false;
+
+  function getFrame () {
+    return document.getElementById(FRAME_ID);
+  }
+
+  function ensureSrc () {
+    const f = getFrame();
+    if (!f) return null;
+    const want = f.getAttribute('data-src') || './rooms/aya.dev.html?preload=1';
+    const cur = (f.getAttribute('src') || '').trim();
+    if (!cur || cur === 'about:blank') f.setAttribute('src', want);
+    return f;
+  }
+
+  // Called by the elevator code (already in this file).
+  window.preloadAyaFragment = function () {
+    const f = ensureSrc();
+    if (!f) return;
+    f.classList.add('preloading'); // display:block (but invisible)
+  };
+
+  window.__ayaIsReady = function () { return ayaReady; };
+
+  window.__swapToAya = function () {
+    const f = ensureSrc();
+    if (!f) return;
+
+    // Stop this room's input/render as much as possible (saves GPU + avoids double-audio).
+    try { document.exitPointerLock && document.exitPointerLock(); } catch (e) {}
+    try {
+      const scene = document.querySelector('a-scene');
+      if (scene && scene.pause) scene.pause();
+      if (scene && scene.canvas) scene.canvas.style.display = 'none';
+    } catch (e) {}
+
+    // Reveal AYA.
+    f.classList.remove('preloading');
+    f.classList.add('show');
+
+    // Optional: update the address bar without reloading.
+    try { history && history.replaceState && history.replaceState(null, '', './rooms/aya.dev.html'); } catch (e) {}
+  };
+
+  window.addEventListener('message', function (e) {
+    const d = e.data;
+    if (!d) return;
+    if ((typeof d === 'string' && d === READY_MSG) || (d && d.type === READY_MSG)) {
+      ayaReady = true;
+    }
+  }, false);
+})();
+</script>
+
+
 
 <script>
 /*
@@ -6152,7 +6258,15 @@ AFRAME.registerComponent('pbr-carpet', {
     overlay.classList.remove('fadeOut');
     overlay.classList.add('fadeIn');
 
-    // Ensure the browser sees this play() as a direct result of key press (gesture-safe).
+    
+
+    // Pause the underlying A-Frame scene while the ride video plays (frees GPU for AYA preload).
+    try {
+      const scene = document.querySelector('a-scene');
+      if (scene && scene.pause) scene.pause();
+      if (scene && scene.canvas) scene.canvas.style.display = 'none';
+    } catch (e) {}
+// Ensure the browser sees this play() as a direct result of key press (gesture-safe).
     rideVideo.src = './elevator_ride.mp4';
     rideVideo.currentTime = 0;
     rideVideo.muted = false;
@@ -6180,12 +6294,34 @@ AFRAME.registerComponent('pbr-carpet', {
       overlay.style.opacity = '1';
       overlay.style.zIndex = '99999';
 
-      // Ensure styles apply before hard navigation.
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          window.location.href = './rooms/aya.dev.html';
-        });
-      });
+      // Ensure styles apply, then swap only once AYA is actually ready.
+// We keep a full-black frame until the iframe signals READY, so there is no "loading gap".
+requestAnimationFrame(() => {
+  requestAnimationFrame(() => {
+    const start = performance.now();
+    const maxWaitMs = 15000; // safety fallback
+
+    const tick = () => {
+      const ready = (window.__ayaIsReady && window.__ayaIsReady());
+      if (ready) {
+        if (window.__swapToAya) window.__swapToAya();
+        // Fade out the black overlay to reveal AYA.
+        overlay.style.transition = 'opacity 700ms ease';
+        overlay.style.opacity = '0';
+        setTimeout(() => { overlay.style.display = 'none'; }, 780);
+        return;
+      }
+
+      if (performance.now() - start > maxWaitMs) {
+        // Fallback: hard navigate if something prevented READY signal.
+        window.location.href = './rooms/aya.dev.html';
+        return;
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+});
     };
   }
 
