@@ -2134,25 +2134,24 @@ const far = this.data.avoidDist;
 <li><strong>Look:</strong> Mouse</li>
 <li><strong>Unlock mouse (optional):</strong> Press <strong>ESC</strong> to release the cursor</li>
 <li><strong>Interact:</strong> Press <span class="keycap">E</span> to activate the elevator</li>
-<li><strong>Elevator:</strong> Press <span class="keycap">E</span> to open/cl
-
-
-<!-- ===== AYA PRELOAD IFRAME (invisible until swap) ===== -->
-<iframe id="ayaPreloadFrame"
-        title="aya"
-        src="about:blank"
-        data-src="./rooms/aya.dev.html?preload=1"
-        allow="autoplay; fullscreen; xr-spatial-tracking; gamepad; accelerometer; gyroscope"
-        allowfullscreen
-        loading="eager"></iframe>
-<!-- ===== END AYA PRELOAD IFRAME ===== -->
-
-ose doors</li>
+<li><strong>Elevator:</strong> Press <span class="keycap">E</span> to open/close doors</li>
 </ul>
 <p class="muted" id="elevatorChoice">By entering the elevator you choose to access the next level.</p>
 <p class="muted">Step back to dismiss this guide.</p>
 </div>
 <!-- ===== END UI OVERLAY ===== -->
+<!-- ===== AYA PRELOAD IFRAME (invisible until swap) ===== -->
+<iframe id="ayaPreloadFrame"
+        title="aya"
+        src="about:blank"
+        data-src="./rooms/aya.dev.html?preload=1"
+        aria-hidden="true"
+        tabindex="-1"
+        allow="autoplay; fullscreen; xr-spatial-tracking; gamepad; accelerometer; gyroscope"
+        allowfullscreen
+        loading="eager"></iframe>
+<!-- ===== END AYA PRELOAD IFRAME ===== -->
+
 <div id="hint" style="display:none"></div>
 <!-- ===== UI OVERLAY: Elevator Ride Video (fullscreen) ===== -->
 <div id="elevatorVideoOverlay" aria-hidden="true">
@@ -5942,6 +5941,14 @@ AFRAME.registerComponent('pbr-carpet', {
     if (!f) return;
     // Keep it invisible; we only use it to warm cache + get READY signal.
     f.classList.add('preloading');
+
+    // Defensive: make sure the hidden iframe never steals keyboard focus (would break E/F).
+    try { f.setAttribute('tabindex','-1'); } catch (e) {}
+    try { window.focus(); } catch (e) {}
+    try {
+      const scene = document.querySelector('a-scene');
+      if (scene && scene.canvas) { scene.canvas.setAttribute('tabindex','0'); scene.canvas.focus(); }
+    } catch (e) {}
   };
 
   window.__ayaIsReady = function () { return ayaReady; };
