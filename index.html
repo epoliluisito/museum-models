@@ -5942,7 +5942,27 @@ AFRAME.registerComponent('pbr-carpet', {
     // Keep it invisible; we only use it to warm cache + get READY signal.
     f.classList.add('preloading');
 
-    // Defensive: make sure the hidden iframe never steals keyboard focus (would break E/F).
+    
+    // Make iframe fully non-interactive.
+    try { f.setAttribute('inert',''); } catch (e) {}
+    try { f.style.pointerEvents = 'none'; } catch (e) {}
+
+    // If focus ever lands on the iframe, immediately reclaim it (Safari/Chrome edge cases).
+    if (!window.__ayaFocusTrapInstalled) {
+      window.__ayaFocusTrapInstalled = true;
+      window.addEventListener('focusin', function(ev){
+        try {
+          const fr = document.getElementById('ayaPreloadFrame');
+          if (fr && ev && ev.target === fr) {
+            if (ev.preventDefault) ev.preventDefault();
+            const sc = document.querySelector('a-scene');
+            if (sc && sc.canvas) { sc.canvas.setAttribute('tabindex','0'); sc.canvas.focus(); }
+            else { window.focus(); }
+          }
+        } catch (e) {}
+      }, true);
+    }
+// Defensive: make sure the hidden iframe never steals keyboard focus (would break E/F).
     try { f.setAttribute('tabindex','-1'); } catch (e) {}
     try { window.focus(); } catch (e) {}
     try {
@@ -6343,9 +6363,6 @@ AFRAME.registerComponent('pbr-carpet', {
     pauseMovement(true);
     fadeOutSceneAudio(AUDIO_FADE_MS);
 
-    // Start preloading AYA as early as possible (while autopilot walks).
-    if (window.preloadAyaFragment) window.preloadAyaFragment();
-
     runAutopilot().then(()=>{
       state = STATE.READY_CONFIRM;
       setGuideHtml('Press <span class="keycap keycap-ask">F</span> again to confirm descent.');
@@ -6359,6 +6376,9 @@ AFRAME.registerComponent('pbr-carpet', {
   }
 
   function onSecondF(){
+    // Start preloading the next room now (minimizes chance of stealing focus during the first F flow).
+    if (window.preloadAyaFragment) window.preloadAyaFragment();
+
     if (state !== STATE.READY_CONFIRM) return;
     state = STATE.VIDEO;
 
