@@ -17733,6 +17733,14 @@ AFRAME.registerComponent('seam-grain-fringe', {
           phaseEl.textContent = 'Ready';
           setBar(1);
 
+
+          // Notify parent (index.html) that AYA is fully ready (assets loaded + warmup done).
+          try {
+            window.__AYA_READY__ = true;
+            if (window.parent && window.parent !== window) {
+              window.parent.postMessage({ type: 'AYA_READY' }, '*');
+            }
+          } catch (e) {}
           overlay.classList.add('hidden');
           setTimeout(() => {
             overlay.style.display = 'none';
