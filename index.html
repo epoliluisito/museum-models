@@ -5911,9 +5911,11 @@ AFRAME.registerComponent('pbr-carpet', {
 <!-- ===== END INSERTED: Elevator Key Activation + Open Message ===== -->
 <script>
 /* -------------------------------------------------------------------------
-   AYA preloader + seamless swap
-   - Start loading ./rooms/aya.dev.html (in an iframe) during the elevator ride.
-   - Wait for aya.dev.html to signal "READY" before revealing it.
+   AYA preloader handshake
+   - Loads ./rooms/aya.dev.html?preload=1 in a hidden iframe to warm HTTP cache + shaders.
+   - aya.dev.html will postMessage('AYA_READY') when it is fully warmed.
+   - We only ever *navigate* to aya.dev.html at the end of the elevator ride
+     (important for WebXR + to guarantee Fear Room audio stops).
 --------------------------------------------------------------------------- */
 (function () {
   const FRAME_ID = 'ayaPreloadFrame';
@@ -5934,34 +5936,15 @@ AFRAME.registerComponent('pbr-carpet', {
     return f;
   }
 
-  // Called by the elevator code (already in this file).
+  // Called by elevator/autopilot code (below) to start preloading as early as possible.
   window.preloadAyaFragment = function () {
     const f = ensureSrc();
     if (!f) return;
-    f.classList.add('preloading'); // display:block (but invisible)
+    // Keep it invisible; we only use it to warm cache + get READY signal.
+    f.classList.add('preloading');
   };
 
   window.__ayaIsReady = function () { return ayaReady; };
-
-  window.__swapToAya = function () {
-    const f = ensureSrc();
-    if (!f) return;
-
-    // Stop this room's input/render as much as possible (saves GPU + avoids double-audio).
-    try { document.exitPointerLock && document.exitPointerLock(); } catch (e) {}
-    try {
-      const scene = document.querySelector('a-scene');
-      if (scene && scene.pause) scene.pause();
-      if (scene && scene.canvas) scene.canvas.style.display = 'none';
-    } catch (e) {}
-
-    // Reveal AYA.
-    f.classList.remove('preloading');
-    f.classList.add('show');
-
-    // Optional: update the address bar without reloading.
-    try { history && history.replaceState && history.replaceState(null, '', './rooms/aya.dev.html'); } catch (e) {}
-  };
 
   window.addEventListener('message', function (e) {
     const d = e.data;
@@ -6248,9 +6231,52 @@ AFRAME.registerComponent('pbr-carpet', {
     elevator.emit('elevator1-toggle');
   }
 
+  function hardStopAllAudio(exceptEl){
+    // Kill every <audio>/<video> except the elevator ride video (so there is no bleed into AYA).
+    const list = Array.from(document.querySelectorAll('audio,video'));
+    for (const m of list){
+      if (exceptEl && m === exceptEl) continue;
+      try { m.pause(); } catch (e) {}
+      try { m.muted = true; m.volume = 0.0; } catch (e) {}
+    }
+    // Suspend the shared WebAudio context (positional-media-audio uses THREE.AudioContext).
+    try {
+      if (window.THREE && THREE.AudioContext && THREE.AudioContext.getContext) {
+        const c = THREE.AudioContext.getContext();
+        if (c && c.state !== 'suspended') c.suspend();
+      }
+    } catch (e) {}
+  }
+
+  function pauseSceneRendering(){
+    // Saves GPU while fullscreen video plays + AYA preloads in iframe.
+    try {
+      const scene = document.querySelector('a-scene');
+      if (scene && scene.pause) scene.pause();
+      if (scene && scene.canvas) scene.canvas.style.display = 'none';
+    } catch (e) {}
+  }
+
+  function waitForAyaReadyThenNavigate(){
+    const start = performance.now();
+    const maxWaitMs = 30000; // hard fallback
+    const tick = () => {
+      const ready = (window.__ayaIsReady && window.__ayaIsReady());
+      if (ready || (performance.now() - start) > maxWaitMs){
+        window.location.href = './rooms/aya.dev.html';
+        return;
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+
   function startOverlayVideo(){
     // Hide guide immediately for immersion
     hideGuide();
+
+    // Stop Fear Room audio as soon as descent is confirmed.
+    hardStopAllAudio(rideVideo);
 
     overlay.style.pointerEvents = 'auto';
     overlay.style.display = 'flex';
@@ -6258,15 +6284,10 @@ AFRAME.registerComponent('pbr-carpet', {
     overlay.classList.remove('fadeOut');
     overlay.classList.add('fadeIn');
 
-    
+    // Pause fear-room rendering while the elevator video runs (prevents double-GPU when AYA preloads).
+    pauseSceneRendering();
 
-    // Pause the underlying A-Frame scene while the ride video plays (frees GPU for AYA preload).
-    try {
-      const scene = document.querySelector('a-scene');
-      if (scene && scene.pause) scene.pause();
-      if (scene && scene.canvas) scene.canvas.style.display = 'none';
-    } catch (e) {}
-// Ensure the browser sees this play() as a direct result of key press (gesture-safe).
+    // Ensure the browser sees this play() as a direct result of key press (gesture-safe).
     rideVideo.src = './elevator_ride.mp4';
     rideVideo.currentTime = 0;
     rideVideo.muted = false;
@@ -6280,13 +6301,11 @@ AFRAME.registerComponent('pbr-carpet', {
       });
     }
 
-    // Preload next room while the video plays
+    // Preload next room while the video plays (cache warmup + READY handshake).
     if (window.preloadAyaFragment) window.preloadAyaFragment();
 
     rideVideo.onended = () => {
-      // IMPORTANT: don't fade the overlay to transparent before navigating,
-      // otherwise you'll briefly reveal the underlying (fear-room) scene.
-      // Hold a fully-opaque black cover and redirect on the next frames.
+      // Hold a fully-opaque black cover before navigating.
       overlay.classList.remove('fadeIn');
       overlay.classList.remove('fadeOut');
       overlay.style.display = 'flex';
@@ -6294,34 +6313,10 @@ AFRAME.registerComponent('pbr-carpet', {
       overlay.style.opacity = '1';
       overlay.style.zIndex = '99999';
 
-      // Ensure styles apply, then swap only once AYA is actually ready.
-// We keep a full-black frame until the iframe signals READY, so there is no "loading gap".
-requestAnimationFrame(() => {
-  requestAnimationFrame(() => {
-    const start = performance.now();
-    const maxWaitMs = 15000; // safety fallback
-
-    const tick = () => {
-      const ready = (window.__ayaIsReady && window.__ayaIsReady());
-      if (ready) {
-        if (window.__swapToAya) window.__swapToAya();
-        // Fade out the black overlay to reveal AYA.
-        overlay.style.transition = 'opacity 700ms ease';
-        overlay.style.opacity = '0';
-        setTimeout(() => { overlay.style.display = 'none'; }, 780);
-        return;
-      }
-
-      if (performance.now() - start > maxWaitMs) {
-        // Fallback: hard navigate if something prevented READY signal.
-        window.location.href = './rooms/aya.dev.html';
-        return;
-      }
-      requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-  });
-});
+      // Now wait for AYA to be fully ready (or hit fallback) before hard navigation.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(waitForAyaReadyThenNavigate);
+      });
     };
   }
 
@@ -6341,6 +6336,9 @@ requestAnimationFrame(() => {
     pauseMovement(true);
     fadeOutSceneAudio(AUDIO_FADE_MS);
 
+    // Start preloading AYA as early as possible (while autopilot walks).
+    if (window.preloadAyaFragment) window.preloadAyaFragment();
+
     runAutopilot().then(()=>{
       state = STATE.READY_CONFIRM;
       setGuideHtml('Press <span class="keycap keycap-ask">F</span> again to confirm descent.');
@@ -6356,6 +6354,9 @@ requestAnimationFrame(() => {
   function onSecondF(){
     if (state !== STATE.READY_CONFIRM) return;
     state = STATE.VIDEO;
+
+    // Stop any remaining Fear Room audio immediately (even before the ride video starts).
+    hardStopAllAudio(rideVideo);
 
     // Close doors only on confirm (your desired UX).
     toggleDoorsClose();
