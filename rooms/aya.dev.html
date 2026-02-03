@@ -338,6 +338,43 @@ float alphaH = smoothstep(cutU - featherU, cutU + featherU, vUV.y);
 /* Boost Earth texture brightness (works even for embedded/base64 textures). */
 </script>
 
+
+<script>
+/* -------------------------------------------------------------------------
+   Preload guard
+   If aya.dev.html is loaded as ?preload=1 inside index.html's hidden iframe:
+   - keep all media muted/paused (no audio leakage)
+   - expose a flag used later to pause rendering after warmup
+--------------------------------------------------------------------------- */
+(function () {
+  try {
+    const isPreload = (new URLSearchParams(window.location.search)).get('preload') === '1';
+    window.__AYA_PRELOAD_MODE = !!isPreload;
+    if (!isPreload) return;
+
+    const silence = () => {
+      document.querySelectorAll('audio,video').forEach((m) => {
+        try { m.muted = true; m.volume = 0.0; m.pause(); } catch (e) {}
+      });
+    };
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', silence, { once: true });
+    } else {
+      silence();
+    }
+
+    // Defensive: if anything tries to play, immediately stop it.
+    document.addEventListener('play', (e) => {
+      const t = e.target;
+      if (!t) return;
+      if (t.tagName === 'AUDIO' || t.tagName === 'VIDEO') {
+        try { t.muted = true; t.volume = 0.0; t.pause(); } catch (err) {}
+      }
+    }, true);
+  } catch (e) {}
+})();
+</script>
 </head>
 <body>
 
@@ -17733,14 +17770,19 @@ AFRAME.registerComponent('seam-grain-fringe', {
           phaseEl.textContent = 'Ready';
           setBar(1);
 
-
-          // Notify parent (index.html) that AYA is fully ready (assets loaded + warmup done).
+          // Notify parent (index.html) that AYA has completed load + shader warmup.
           try {
-            window.__AYA_READY__ = true;
             if (window.parent && window.parent !== window) {
+              window.parent.postMessage('AYA_READY', '*');
               window.parent.postMessage({ type: 'AYA_READY' }, '*');
             }
           } catch (e) {}
+
+          // If running as a hidden preload iframe, pause rendering after warmup to avoid double-GPU load.
+          try {
+            if (window.__AYA_PRELOAD_MODE && scene && scene.pause) scene.pause();
+          } catch (e) {}
+
           overlay.classList.add('hidden');
           setTimeout(() => {
             overlay.style.display = 'none';
