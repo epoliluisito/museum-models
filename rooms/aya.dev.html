@@ -375,6 +375,384 @@ float alphaH = smoothstep(cutU - featherU, cutU + featherU, vUV.y);
   } catch (e) {}
 })();
 </script>
+
+  <!-- === SOUL ORB (sphere_dome) — animated milky volumetric shader (GLSL1, Three.js/A-Frame compatible) === -->
+  <script>
+  (function () {
+    if (!window.AFRAME) return;
+
+    // Simple value noise / fbm helpers (fast enough for a single orb).
+    // GLSL 1.0 compatible (no #version 300 es).
+    AFRAME.registerShader('soulorb', {
+      schema: {
+        time:    {type: 'time', is: 'uniform'},
+        seed:    {type: 'number', is: 'uniform', default: Math.random() * 1000.0},
+        opacity: {type: 'number', is: 'uniform', default: 0.92},
+        scale:   {type: 'number', is: 'uniform', default: 1.55},
+        swirl:   {type: 'number', is: 'uniform', default: 0.85}
+      },
+
+      vertexShader: [
+        'varying vec3 vPos;',
+        'varying vec3 vN;',
+        'varying vec2 vUv;',
+        'void main(){',
+        '  vUv = uv;',
+        '  vN = normalize(normalMatrix * normal);',
+        '  vec4 wp = modelMatrix * vec4(position, 1.0);',
+        '  vPos = wp.xyz;',
+        '  gl_Position = projectionMatrix * viewMatrix * wp;',
+        '}'
+      ].join('\n'),
+
+      fragmentShader: [
+        'precision highp float;',
+        'uniform float time;',
+        'uniform float seed;',
+        'uniform float opacity;',
+        'uniform float scale;',
+        'uniform float swirl;',
+        'varying vec3 vPos;',
+        'varying vec3 vN;',
+        'varying vec2 vUv;',
+
+        'float hash(vec3 p){',
+        '  p = fract(p * 0.3183099 + vec3(0.1,0.2,0.3));',
+        '  p *= 17.0;',
+        '  return fract(p.x * p.y * p.z * (p.x + p.y + p.z));',
+        '}',
+
+        'float noise(vec3 p){',
+        '  vec3 i = floor(p);',
+        '  vec3 f = fract(p);',
+        '  f = f*f*(3.0-2.0*f);',
+        '  float n000 = hash(i + vec3(0.0,0.0,0.0));',
+        '  float n100 = hash(i + vec3(1.0,0.0,0.0));',
+        '  float n010 = hash(i + vec3(0.0,1.0,0.0));',
+        '  float n110 = hash(i + vec3(1.0,1.0,0.0));',
+        '  float n001 = hash(i + vec3(0.0,0.0,1.0));',
+        '  float n101 = hash(i + vec3(1.0,0.0,1.0));',
+        '  float n011 = hash(i + vec3(0.0,1.0,1.0));',
+        '  float n111 = hash(i + vec3(1.0,1.0,1.0));',
+        '  float nx00 = mix(n000, n100, f.x);',
+        '  float nx10 = mix(n010, n110, f.x);',
+        '  float nx01 = mix(n001, n101, f.x);',
+        '  float nx11 = mix(n011, n111, f.x);',
+        '  float nxy0 = mix(nx00, nx10, f.y);',
+        '  float nxy1 = mix(nx01, nx11, f.y);',
+        '  return mix(nxy0, nxy1, f.z);',
+        '}',
+
+        'float fbm(vec3 p){',
+        '  float a = 0.5;',
+        '  float f = 0.0;',
+        '  for(int k=0;k<5;k++){',
+        '    f += a * noise(p);',
+        '    p *= 2.02;',
+        '    a *= 0.5;',
+        '  }',
+        '  return f;',
+        '}',
+
+        'void main(){',
+        '  // View direction (world).',
+        '  vec3 V = normalize(cameraPosition - vPos);',
+        '  float fres = pow(1.0 - max(dot(normalize(vN), V), 0.0), 2.4);',
+
+        '  // Swirly domain warp in world space (keeps it "in the room", not UV-locked).',
+        '  float t = time * 0.00022;',
+        '  vec3 p = vPos * scale;',
+        '  p += vec3(seed * 0.07, seed * 0.11, seed * 0.13);',
+        '  vec3 w = vec3(',
+        '    fbm(p + vec3(0.0, 0.0, t*3.0)),',
+        '    fbm(p + vec3(t*2.2, 0.0, 0.0)),',
+        '    fbm(p + vec3(0.0, t*1.7, 0.0))',
+        '  );',
+        '  p += (w - 0.5) * (1.35 * swirl);',
+
+        '  // Milky volume impression: layered density + soft internal glow.',
+        '  float d1 = fbm(p * 0.55 + vec3(0.0, t*2.5, 0.0));',
+        '  float d2 = fbm(p * 1.10 + vec3(t*1.4, 0.0, t*1.9));',
+        '  float d3 = fbm(p * 2.25 + vec3(0.0, t*3.2, t*0.8));',
+        '  float density = (d1*0.55 + d2*0.35 + d3*0.20);',
+
+        '  // Center softness: make core milky, edges slightly brighter.',
+        '  float core = smoothstep(0.15, 0.85, density);',
+        '  float rim = smoothstep(0.35, 0.95, density) * fres;',
+
+        '  // Subtle "dance" pulses.',
+        '  float pulse = 0.75 + 0.25 * sin((density*6.2831) + t*5.0);',
+
+        '  vec3 base = vec3(0.78, 0.82, 0.88);',
+        '  vec3 glow = vec3(0.92, 0.97, 1.00);',
+        '  vec3 col = mix(base, glow, 0.55*core + 0.85*rim);',
+        '  col *= (0.85 + 0.25 * core) * pulse;',
+
+        '  // Opaque/milky: mostly solid with internal variance. Keep alpha high but not 1.0.',
+        '  float a = opacity;',
+        '  a *= (0.82 + 0.18 * core);',
+
+        '  gl_FragColor = vec4(col, a);',
+        '}'
+      ].join('\n')
+    });
+
+    // Ensure we randomize seed per load for the orb(s).
+    AFRAME.registerComponent('soulorb-seed', {
+      schema: {min: {default: 0.0}, max: {default: 1000.0}},
+      init: function () {
+        const mat = this.el.getAttribute('material') || {};
+        mat.shader = 'soulorb';
+        // random seed each load
+        mat.seed = this.data.min + Math.random() * (this.data.max - this.data.min);
+        // set defaults for a milky volumetric read
+        if (mat.opacity == null) mat.opacity = 1.0;
+        if (mat.transparent == null) mat.transparent = false;
+        if (mat.side == null) mat.side = 'double';
+        this.el.setAttribute('material', mat);
+      }
+    });
+  })();
+  </script>
+
+
+<script>
+(function(){
+  if (!window.AFRAME || !window.THREE) return;
+
+  // Sphere-dome-only: make the dome interior react properly and add animated caustic-like emissive bands.
+  AFRAME.registerComponent('sphere-dome-caustics', {
+    schema: {
+      orb: {type: 'selector'},
+      strength: {type: 'number', default: 0.45},
+      scale: {type: 'number', default: 0.22},
+      speed: {type: 'number', default: 0.12},
+      maxDistance: {type: 'number', default: 14.0}
+    },
+    init: function () {
+      this._mesh = null;
+      this._compiled = false;
+      this._shader = null;
+      this._orbPos = new THREE.Vector3();
+      this._domeParams = null;
+      this._ensureMesh();
+    },
+    _ensureMesh: function () {
+      const el = this.el;
+      const tryGet = () => {
+        const mesh = el.getObject3D('mesh');
+        if (!mesh) { setTimeout(tryGet, 50); return; }
+        this._mesh = mesh;
+        this._apply();
+      };
+      tryGet();
+    },
+    _apply: function () {
+      if (!this._mesh || this._compiled) return;
+
+      const mesh = this._mesh;
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      const cloned = mats.map(m => (m && m.isMaterial) ? m.clone() : m);
+
+      // IMPORTANT: keep OUTER as normal front-facing; make INNER visible from inside; wall double.
+      if (cloned[0] && cloned[0].isMaterial) cloned[0].side = THREE.FrontSide;
+      if (cloned[1] && cloned[1].isMaterial) cloned[1].side = THREE.DoubleSide;
+      if (cloned[2] && cloned[2].isMaterial) cloned[2].side = THREE.DoubleSide;
+
+      // Ensure shell is a solid depth occluder (prevents "seeing the shell through the tunnel").
+      for (let i = 0; i < cloned.length; i++) {
+        const m = cloned[i];
+        if (!m || !m.isMaterial) continue;
+        m.transparent = false;
+        m.opacity = 1.0;
+        m.depthWrite = true;
+        m.depthTest = true;
+      }
+
+      // Inject caustics only on the INNER material (fallback to first).
+      const targetIndex = (cloned[1] && cloned[1].isMaterial) ? 1 : 0;
+      const mat = cloned[targetIndex];
+
+      mat.onBeforeCompile = (shader) => {
+        shader.uniforms.uTime = { value: 0.0 };
+        shader.uniforms.uOrbPos = { value: new THREE.Vector3(0,0,0) };
+        shader.uniforms.uStrength = { value: this.data.strength };
+        shader.uniforms.uScale = { value: this.data.scale };
+        shader.uniforms.uSpeed = { value: this.data.speed };
+        shader.uniforms.uMaxD = { value: this.data.maxDistance };
+        shader.uniforms.uInside = { value: 0.0 };
+
+        // world position varying
+        shader.vertexShader = shader.vertexShader
+          .replace('#include <common>', '#include <common>\nvarying vec3 vWorldPos;')
+          .replace('#include <begin_vertex>',
+                   '#include <begin_vertex>\nvec4 worldPosition = modelMatrix * vec4(position, 1.0);\nvWorldPos = worldPosition.xyz;');
+
+        const inject = `
+uniform float uTime;
+uniform vec3  uOrbPos;
+uniform float uStrength;
+uniform float uScale;
+uniform float uSpeed;
+uniform float uMaxD;
+uniform float uInside;
+varying vec3 vWorldPos;
+
+float hash21(vec2 p){
+  p = fract(p * vec2(123.34, 456.21));
+  p += dot(p, p + 45.32);
+  return fract(p.x * p.y);
+}
+float noise2(vec2 p){
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  float a = hash21(i);
+  float b = hash21(i + vec2(1.0, 0.0));
+  float c = hash21(i + vec2(0.0, 1.0));
+  float d = hash21(i + vec2(1.0, 1.0));
+  vec2 u = f*f*(3.0-2.0*f);
+  return mix(a, b, u.x) + (c - a)*u.y*(1.0 - u.x) + (d - b)*u.x*u.y;
+}
+float fbm(vec2 p){
+  float v = 0.0;
+  float a = 0.55;
+  mat2 m = mat2(1.6, 1.2, -1.2, 1.6);
+  for(int i=0;i<4;i++){
+    v += a * noise2(p);
+    p = m * p;
+    a *= 0.55;
+  }
+  return v;
+}
+float causticField(vec2 p){
+  float t = uTime * uSpeed;
+  vec2 q = p + vec2(t*0.55, t*0.37);
+  float w = fbm(q*1.2);
+  q += 0.65 * vec2(cos(6.2831*w + t), sin(6.2831*w - t));
+  float f = fbm(q*2.6);
+  f = 1.0 - abs(2.0*f - 1.0);
+  f = pow(max(f, 0.0), 3.2);
+  float g = sin((p.x + p.y)*2.2 + t*1.1) * 0.5 + 0.5;
+  g = pow(g, 2.5);
+  return clamp(f * (0.65 + 0.55*g), 0.0, 1.0);
+}
+`;
+
+        shader.fragmentShader = shader.fragmentShader
+          .replace('#include <common>', '#include <common>\n' + inject)
+          .replace('vec3 totalEmissiveRadiance = emissive;',
+`vec3 totalEmissiveRadiance = emissive;
+  // Caustics projected onto the dome interior (world xz relative to orb).
+  float d = distance(vWorldPos, uOrbPos);
+  float atten = smoothstep(uMaxD, 2.0, d);
+  vec2 p = (vWorldPos.xz - uOrbPos.xz) * uScale;
+
+  float c = causticField(p);
+
+  vec3 warm = vec3(1.00, 0.92, 0.86);
+  vec3 cool = vec3(0.30, 0.55, 1.00);
+  float fringe = fbm(p*3.6 + uTime*0.03);
+  vec3 caustCol = mix(warm, cool, fringe*0.35);
+
+  totalEmissiveRadiance += caustCol * c * atten * uStrength * uInside;`
+          );
+
+        this._shader = shader;
+      };
+
+      mat.needsUpdate = true;
+      mesh.material = cloned;
+      this._materials = cloned;
+      this._compiled = true;
+    },
+    tick: function (t) {
+      if (!this._compiled) return;
+
+      // Orb position
+      const orbEl = this.data.orb;
+      if (orbEl && orbEl.object3D) {
+        orbEl.object3D.getWorldPosition(this._orbPos);
+      }
+
+      // Gate emissive to only when camera is inside this dome volume.
+      let inside = 0.0;
+      const sceneCam = this.el.sceneEl && this.el.sceneEl.camera;
+      if (sceneCam) {
+        const camPos = new THREE.Vector3();
+        (sceneCam.el ? sceneCam.el.object3D : sceneCam).getWorldPosition(camPos);
+
+        if (!this._domeParams) {
+          const td = this.el.getAttribute('thick-dome-shell') || {};
+          const r = Number(td.radius || 11.1);
+          const s = td.innerScale || {x:1, y:1, z:1};
+          this._domeParams = { r, sx: Number(s.x||s[0]||1), sy: Number(s.y||s[1]||1), sz: Number(s.z||s[2]||1) };
+        }
+        const lp = this.el.object3D.worldToLocal(camPos.clone());
+        const p = this._domeParams;
+        const nx = lp.x / (p.r * p.sx);
+        const ny = lp.y / (p.r * p.sy);
+        const nz = lp.z / (p.r * p.sz);
+        const nlen = Math.sqrt(nx*nx + ny*ny + nz*nz);
+        inside = (nlen < 0.98) ? 1.0 : 0.0;
+      }
+
+      if (this._shader && this._shader.uniforms) {
+        this._shader.uniforms.uTime.value = t / 1000;
+        this._shader.uniforms.uOrbPos.value.copy(this._orbPos);
+        this._shader.uniforms.uStrength.value = this.data.strength;
+        this._shader.uniforms.uScale.value = this.data.scale;
+        this._shader.uniforms.uSpeed.value = this.data.speed;
+        this._shader.uniforms.uMaxD.value = this.data.maxDistance;
+        this._shader.uniforms.uInside.value = inside;
+      }
+    }
+  });
+
+  // Orb-local moving point lights (finite distance + decay to avoid affecting outside areas).
+  AFRAME.registerComponent('orbital-pointlights', {
+    schema: {
+      radius: {type: 'number', default: 2.4},
+      height: {type: 'number', default: 0.35},
+      speed:  {type: 'number', default: 0.22},
+      distance: {type: 'number', default: 12.5},
+      decay: {type: 'number', default: 2.0},
+      intensity: {type: 'number', default: 1.15},
+      count: {type: 'int', default: 3}
+    },
+    init: function () {
+      this.lights = [];
+      const n = Math.max(2, Math.min(4, this.data.count));
+      for (let i = 0; i < n; i++) {
+        const e = document.createElement('a-entity');
+        e.setAttribute('light', {
+          type: 'point',
+          color: '#ffffff',
+          intensity: this.data.intensity,
+          distance: this.data.distance,
+          decay: this.data.decay
+        });
+        e.setAttribute('position', '0 0 0');
+        this.el.appendChild(e);
+        this.lights.push(e);
+      }
+    },
+    tick: function (t) {
+      const time = t / 1000;
+      const n = this.lights.length;
+      if (!n) return;
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2.0 + time * this.data.speed;
+        const wob = 0.25 * Math.sin(time * 0.9 + i * 1.7);
+        const x = Math.cos(a) * (this.data.radius + wob);
+        const z = Math.sin(a) * (this.data.radius + wob * 0.6);
+        const y = this.data.height + 0.20 * Math.sin(time * 1.3 + i * 2.1);
+        this.lights[i].object3D.position.set(x, y, z);
+      }
+    }
+  });
+})();
+</script>
+
 </head>
 <body>
 
@@ -747,8 +1125,8 @@ AFRAME.registerComponent('thick-dome-shell', {
     thetaLength: {type: 'number', default: 132},
 
     // Segments
-    widthSegments: {type: 'int', default: 128},
-    heightSegments: {type: 'int', default: 96},
+    widthSegments: {type: 'int', default: 56},
+    heightSegments: {type: 'int', default: 40},
 
     // Textures (use <img> assets)
     diffuse: {type: 'selector'},
@@ -3341,6 +3719,273 @@ AFRAME.registerComponent('mercury-ibl-silver', {
   }
 });
 /* ---- end mercury-ibl-silver ---- */
+
+
+/* ---- Mercury pool: port of index.html analytic ripple look (non-interactive, multi-emitter) ----
+   - No ping-pong simulation, no render targets.
+   - One ShaderMaterial on the pool plane; ripples are analytic wavefronts like index.html.
+   - Emits points over time (looping) to keep the surface alive.
+*/
+AFRAME.registerComponent('mercury-page-look', {
+  schema: {
+    radius: { type: 'number', default: 4.05 },       // disc radius in world units (visual mask is UV-based)
+    seed: { type: 'int', default: 17 },
+    spawnInterval: { type: 'number', default: 0.88 } // seconds between new ripple emissions
+  },
+
+  init: function () {
+    const el = this.el;
+    const data = this.data;
+
+    // Seeded RNG (deterministic across runs)
+    let s = (data.seed >>> 0) || 1;
+    const rand = () => {
+      // xorshift32
+      s ^= (s << 13); s >>>= 0;
+      s ^= (s >>> 17); s >>>= 0;
+      s ^= (s << 5);  s >>>= 0;
+      return (s >>> 0) / 4294967296;
+    };
+    this._rand = rand;
+
+    // Fixed-size point buffer to match index.html shader contract
+    this._POINTS = 96;
+    this._points = new Float32Array(this._POINTS * 4);
+    this._nextSpawn = 0;
+
+    // Empty points (w=0 => unused)
+    for (let i = 0; i < this._POINTS; i++) {
+      this._points[i*4 + 0] = 0.5;
+      this._points[i*4 + 1] = 0.5;
+      this._points[i*4 + 2] = -1e9;
+      this._points[i*4 + 3] = 0.0;
+    }
+
+    const mkMaterial = () => {
+      const THREE = window.THREE;
+      const uniforms = {
+        uRes:    { value: new THREE.Vector2(1, 1) },
+        uTime:   { value: 0 },
+        uPoints: { value: this._points } // flattened vec4 array (xyzt) for broad compatibility
+      };
+
+      const mat = new THREE.ShaderMaterial({
+        uniforms,
+        transparent: false,
+        depthWrite: true,
+        depthTest: true,
+        side: THREE.DoubleSide,
+        vertexShader: `
+          varying vec2 vUv;
+          void main(){
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          precision highp float;
+          varying vec2 vUv;
+
+          uniform vec2  uRes;
+          uniform float uTime;
+          uniform float uPoints[${96*4}];
+
+          float hash21(vec2 p){
+            p = fract(p*vec2(123.34, 345.45));
+            p += dot(p, p+34.345);
+            return fract(p.x*p.y);
+          }
+
+          vec4 getPoint(int i){
+            int o = i*4;
+            return vec4(uPoints[o+0], uPoints[o+1], uPoints[o+2], uPoints[o+3]);
+          }
+
+          float heightField(vec2 uv){
+            float h = 0.0;
+
+            // Outward-expanding ripples: identical model to index.html
+            float k = 32.0;              // ring density
+            float propagate = 0.065625;   // wavefront speed (4x slower)
+            float spatialDecay = 0.36;   // how far ripples travel before dying
+            float timeDecay = 0.95;      // how long each emission lasts
+            float frontSoft = 0.014;     // softness of the leading edge
+
+            for(int i=0;i<${96};i++){
+              vec4 p = getPoint(i);
+              float t0 = p.z;
+              float st = p.w;
+              float s  = abs(st);
+              if(s <= 0.0) continue;
+
+              float age = max(0.0, uTime - t0);
+
+              vec2 d = uv - p.xy;
+              // Aspect correction so rings stay circular on non-square viewports
+              d.x *= uRes.x / uRes.y;
+              float dist = length(d);
+
+              float travel = age * propagate;
+
+              // Gate: no wave ahead of the front
+              float gate = smoothstep(0.0, frontSoft, travel - dist);
+
+              // Oscillation follows the moving front
+              float phase = (dist - travel) * k;
+
+              // Damping: distance + time
+              float env = exp(-dist/spatialDecay) * exp(-age/4.40);
+
+              // Reduce hotspot at the emission point
+              float core = 1.0 - exp(-pow(dist/0.010, 2.0));
+
+              // Persistent wake (subtle, because this is autonomous)
+              float wakeEnv = exp(-dist/0.110) * exp(-age/18.4);
+              h += wakeEnv * core * s * 0.070;
+
+              h += sin(phase) * env * gate * core * s * 0.45;
+            }
+
+            // Ambient slow swell (very subtle, keeps the surface alive)
+            h += 0.006 * sin(uv.x*5.6 + uTime*0.045);
+
+            return h;
+          }
+
+          vec3 normalFromHeight(vec2 uv){
+            // Finite differences; epsilon tied to pixel size
+            vec2 px = 1.0 / uRes;
+            float hC = heightField(uv);
+            float hX = heightField(uv + vec2(px.x, 0.0));
+            float hY = heightField(uv + vec2(0.0, px.y));
+
+            float sx = (hX - hC) * 3.2;
+            float sy = (hY - hC) * 3.2;
+
+            return normalize(vec3(-sx, -sy, 1.0));
+          }
+
+          void main(){
+            vec2 uv = vUv;
+
+            // Disc mask (plane clipped to circle at uv center)
+            vec2 dd = uv - 0.5;
+            float r = length(dd);
+            float disc = 1.0 - smoothstep(0.495, 0.505, r);
+            if(disc <= 0.0) discard;
+
+            // Base "black mercury" with a faint cool tint
+            vec3 base = vec3(0.010, 0.011, 0.013);
+
+            // Vignette
+            float vig = smoothstep(0.52, 0.18, r);
+            base *= mix(0.90, 1.10, vig);
+
+            vec3 n = normalFromHeight(uv);
+
+            // Two studio lights (same idea as the webpage shader)
+            vec3 l1 = normalize(vec3(-0.35, 0.25, 0.90));
+            vec3 l2 = normalize(vec3( 0.25,-0.10, 0.95));
+            vec3 v  = vec3(0.0, 0.0, 1.0);
+
+            float ndl1 = max(dot(n, l1), 0.0);
+            float ndl2 = max(dot(n, l2), 0.0);
+
+            // Specular with Fresnel (slick)
+            vec3 h1 = normalize(l1 + v);
+            float spec1 = pow(max(dot(n, h1), 0.0), 92.0) * 1.15;
+
+            vec3 h2 = normalize(l2 + v);
+            float spec2 = pow(max(dot(n, h2), 0.0), 72.0) * 0.55;
+
+            float fres = pow(1.0 - max(dot(n, v), 0.0), 2.6);
+
+            // "Reflection" gradient (no env map, but feels reflective)
+            float refl = smoothstep(-0.2, 0.9, n.y*0.6 + 0.35);
+            vec3 reflection = vec3(0.040, 0.042, 0.045) + refl*vec3(0.060, 0.065, 0.070);
+
+            vec3 col = base;
+            col += reflection * (1.25 * fres);
+            col += vec3(0.020, 0.021, 0.022) * (0.26*ndl1 + 0.14*ndl2);
+            col += vec3(0.160, 0.165, 0.170) * (spec1 + spec2);
+
+            // Tiny cinematic grain
+            float g = hash21(uv * (uRes.xy * 0.9) + uTime*0.0375) - 0.5;
+            col += g * 0.009;
+
+            // Gentle filmic curve
+            col = 1.0 - exp(-col * 1.55);
+            col = clamp(col, 0.0, 1.0);
+
+            gl_FragColor = vec4(col, 1.0);
+          }
+        `
+      });
+
+      // Preserve previous z-fight mitigation on the surface
+      mat.polygonOffset = true;
+      mat.polygonOffsetFactor = -2;
+      mat.polygonOffsetUnits = -2;
+
+      return mat;
+    };
+
+    const apply = () => {
+      const mesh = el.getObject3D('mesh');
+      if (!mesh) return false;
+      if (!this._mat) this._mat = mkMaterial();
+      mesh.material = this._mat;
+      mesh.material.needsUpdate = true;
+      // Avoid shadow-map artifacts / geometric bands on close camera
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      mesh.traverse && mesh.traverse((o)=>{ if(o && o.isMesh){ o.castShadow=false; o.receiveShadow=false; } });
+      return true;
+    };
+
+    if (!apply()) {
+      el.addEventListener('object3dset', () => apply());
+    }
+  },
+
+  tick: function (t, dt) {
+    if (!this._mat) return;
+
+    const time = (t || 0) / 1000.0;
+    this._mat.uniforms.uTime.value = time;
+
+    const sceneEl = this.el.sceneEl;
+    const renderer = sceneEl && sceneEl.renderer;
+    if (renderer) {
+      const size = renderer.getSize(new THREE.Vector2());
+      this._mat.uniforms.uRes.value.set(Math.max(1, size.x), Math.max(1, size.y));
+    }
+
+    // Spawn new ripple points over time, cycling through the buffer
+    if (time >= this._nextSpawn) {
+      const idx = Math.floor(time / this.data.spawnInterval) % this._POINTS;
+
+      // Uniform random point inside a disc in UV space (keep away from rim)
+      const a = this._rand() * 6.28318530718;
+      const rr = Math.sqrt(this._rand()) * 0.48;
+      const x = 0.5 + Math.cos(a) * rr;
+      const y = 0.5 + Math.sin(a) * rr;
+
+      const o = idx * 4;
+      this._points[o + 0] = x;
+      this._points[o + 1] = y;
+      this._points[o + 2] = time;
+      this._points[o + 3] = 1.0; // strength
+
+      this._mat.uniforms.uPoints.value = this._points;
+      this._nextSpawn = time + this.data.spawnInterval;
+    }
+  }
+});
+/* ---- end mercury-page-look ---- */
+
+
+
 
 
 // --- Force a unified seat PBR on glTF meshes (so rock_seats match rock_seat_01 material) ---
@@ -10150,7 +10795,7 @@ AFRAME.registerComponent('merge-align', {
         return;
       }
 
-      // Assumption: imported root is a direct child of <a-scene prune-colliders renderer="antialias: false; precision: mediump; colorManagement: true; physicallyCorrectLights: true; powerPreference: high-performance;">.
+      // Assumption: imported root is a direct child of <a-scene prune-colliders renderer="antialias: false; precision: mediump; colorManagement: true; physicallyCorrectLights: false; powerPreference: high-performance;">.
       this.el.object3D.position.add(this._tmpD);
     }
   });
@@ -10960,7 +11605,7 @@ AFRAME.registerComponent('merge-align', {
           // Cap pixel ratio a bit on high-DPI displays to reduce stutter (keeps highlights crisp).
           if (!this._didPR) {
             const r = this.el.renderer || (this.el.sceneEl && this.el.sceneEl.renderer);
-            if (r && r.setPixelRatio) r.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+            if (r && r.setPixelRatio) r.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25));
             this._didPR = true;
           }
           SHARED.update(time);
@@ -14783,7 +15428,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
 
     <!-- Opaque mercury body: a filled volume under the animated surface (so you never see ground) -->
     <a-entity id="mercury_liquid_volume" render-order="value: 0" visible="false"
-              geometry="primitive: cylinder; radius: 4.00; height: 68.0; openEnded: true; segmentsRadial: 128; segmentsHeight: 24"
+              geometry="primitive: cylinder; radius: 4.00; height: 68.0; openEnded: true; segmentsRadial: 48; segmentsHeight: 24"
               position="0 -34.2 38.7"
               material="shader: standard; color: #323842; metalness: 1.0; roughness: 0.070; emissive: #000000; emissiveIntensity: 0; side: back; transparent: false; opacity: 1; depthWrite: true" mercury-ibl-silver="intensity: 1"
               shadow="cast:false; receive:false"></a-entity>
@@ -14810,11 +15455,10 @@ AFRAME.registerComponent('seam-grain-fringe', {
 
     <!-- Liquid metal surface (square grid clipped to disc; animated micro motion) -->
     <a-entity id="mercury_surface" render-order="value: 3"
-              mercury-micro-normals="strength: 1.35; repeatX: 1.15; repeatY: 1.85; flowScale: 0.22; flowRotate: 0.18"
-              geometry="primitive: plane; width: 8.120; height: 8.120; segmentsWidth: 96; segmentsHeight: 96"              rotation="-90 0 0"
+              geometry="primitive: plane; width: 8.120; height: 8.120; segmentsWidth: 64; segmentsHeight: 64"
+              rotation="-90 0 0"
               position="0 0.045 38.7"
-              material="shader: standard; color: #343a43; metalness: 1.0; roughness: 0.140; envMapIntensity: 1.18; emissive: #000000; emissiveIntensity: 0; transparent: false; opacity: 1; side: double; depthWrite: true; depthTest: true; polygonOffset: true; polygonOffsetFactor: -2; polygonOffsetUnits: -2"
-              mercury-surface-gpu="amp: 0.038; radius: 4.05; maxDown: 0.022; speed: 0.240; rippleFreq: 2.8; whirlCount: 5; lifeMin: 9; lifeMax: 22; drift: 0.030; seed: 17"
+              mercury-page-look="radius: 4.05; seed: 17; spawnInterval: 0.44"
               shadow="cast:false; receive:false" mercury-ibl-silver="intensity: 1">
     <!-- Liquid metal fill layer (prevents ground peek-through when the top surface dimples) -->
     
@@ -14924,13 +15568,13 @@ AFRAME.registerComponent('seam-grain-fringe', {
               radius="4.10"
               position="0 0.050 38.7" rotation="-90 0 0"
               material="shader: flat; color: #d9f1ff; transparent: true; opacity: 0.018; side: double; depthWrite: false; depthTest: true; polygonOffset: true; polygonOffsetFactor: -3; polygonOffsetUnits: -3"
-              shadow="cast:false; receive:false"></a-circle>
+              shadow="cast:false; receive:false" visible="false"></a-circle>
     <!-- Emissive bloom disc (drives soft glow from pool without extra lights) -->
     <a-circle id="mercury_pool_emissive" render-order="value: 5"
               radius="4.18"
               position="0 0.049 38.7" rotation="-90 0 0"
               material="shader: standard; color: #000000; emissive: #d9f1ff; emissiveIntensity: 4.5; metalness: 0.0; roughness: 1.0; transparent: true; opacity: 0.10; side: double; depthWrite: false; depthTest: true; polygonOffset: true; polygonOffsetFactor: -3; polygonOffsetUnits: -3"
-              shadow="cast:false; receive:false"></a-circle>
+              shadow="cast:false; receive:false" visible="false"></a-circle>
 
 <!-- Planar reflection overlay (dynamic reflection of the split sphere on the mercury surface) -->
     <a-entity id="mercury_surface_reflection" render-order="value: 6"
@@ -14938,7 +15582,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
               rotation="-90 0 0"
               position="0 0.052 38.7"
               planar-reflector="resolution: 256; maxHz: 4; forcePosDelta: 0.10; forceAngDelta: 0.07; maxDistance: 15; maxFar: 55; pauseWhenOverlay: true; pauseWhenVideo: true; reflectLayer: 1; color: #15181f; opacity: 0.46; clipBias: 0.003"
-              shadow="cast:false; receive:false"></a-entity>
+              shadow="cast:false; receive:false" visible="false"></a-entity>
     <!-- Experience video overlay (enabled when seated + user presses F) -->
     <a-entity id="aya_experience_video"
               visible="false"
@@ -14986,7 +15630,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
             rotation="0 -90 0">
     <!-- Visual frame so the portal reads clearly even before you reach it -->
     <a-entity id="dome_portal_frame" visible="false"
-              geometry="primitive: torus; radius: 1.30; radiusTubular: 0.06; segmentsRadial: 20; segmentsTubular: 120"
+              geometry="primitive: torus; radius: 1.30; radiusTubular: 0.06; segmentsRadial: 20; segmentsTubular: 72"
               organic-rim="amp: 0.10; freq: 7.0; seed: 83; zAmp: 0.03"
               material="shader: standard; color: #ffffff; src: #moonDiffuse; normalMap: #moonNormal; roughnessMap: #moonRough; aoMap: #moonAO; metalness: 0; roughness: 1; repeat: 14 10; normalScale: 0.95 0.95; side: double"
               shadow="cast:false; receive:true" uv2-from-uv></a-entity>
@@ -15012,7 +15656,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
     <!-- Cosmetic fillet (rounded edge) to soften the hard cut where tunnel meets dome.
          Purely visual: does not affect portal alignment/cutting/masking logic. -->
     <a-entity id="dome_portal_fillet"
-              geometry="primitive: torus; radius: 1.34; radiusTubular: 0.09; segmentsRadial: 24; segmentsTubular: 160"
+              geometry="primitive: torus; radius: 1.34; radiusTubular: 0.09; segmentsRadial: 24; segmentsTubular: 96"
               position="0 0 0.05"
               scale="1 1 0.75"
               organic-rim="amp: 0.03; freq: 9.0; seed: 101; zAmp: 0.015"
@@ -15083,7 +15727,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
 
     <!-- Cosmetic fillet (rounded edge) to soften the hard cut) -->
     <a-entity id="dome2_portal_fillet"
-              geometry="primitive: torus; radius: 1.34; radiusTubular: 0.09; segmentsRadial: 24; segmentsTubular: 160"
+              geometry="primitive: torus; radius: 1.34; radiusTubular: 0.09; segmentsRadial: 24; segmentsTubular: 96"
               position="0 0 0.05"
               scale="1 1 0.75"
               organic-rim="amp: 0.03; freq: 9.0; seed: 201; zAmp: 0.015"
@@ -15155,7 +15799,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
       <!-- Blend collar to give the rim thickness (prevents a thin/flat read) -->
 <!-- Inner fillet ring to soften the lip -->
       <a-entity id="sphere_dome_portal_fillet_ring"
-                geometry="primitive: torus; radius: 1.28; radiusTubular: 0.055; segmentsRadial: 24; segmentsTubular: 160" rotation="0 0 0"
+                geometry="primitive: torus; radius: 1.28; radiusTubular: 0.055; segmentsRadial: 24; segmentsTubular: 96" rotation="0 0 0"
                 position="0 -0.03 0.00"
                 scale="1 1 0.45"
                 organic-rim="amp: 0.015; freq: 9.0; seed: 101; zAmp: 0.008"
@@ -15314,15 +15958,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
        - Temporary bright light in the center for integration checks
        ============================================================ -->
 <a-entity id="sphere_dome_import" position="-14.00 -1.20 0.00" freeze-static-mesh>
-      <!-- TEMP spotlight for visibility in sphere_dome (copy of nde_dome temp spotlight) -->
-      <a-entity id="nde_dome_temp_spotlight_target" position="-9.40 0.75 0"></a-entity>
-      <a-entity id="nde_dome_temp_spotlight"
-                position="-9.40 7.20 0"
-                rotation="-90 0 0"
-                light="type: spot; color: #cfe9ff; intensity: 26; angle: 80; penumbra: 0.85; distance: 60; decay: 2; castShadow: false; target: #sphere_dome_temp_spotlight_target"></a-entity>
-
-
-    <!-- Anchor at the tunnel_02 far mouth (local), used for merge-align -->
+<!-- Anchor at the tunnel_02 far mouth (local), used for merge-align -->
     <a-entity id="sphere_dome_portal_anchor" position="0 1.20 0" rotation="0 90 0"></a-entity>
 
     <!-- Clip reference: cylindrical cut through the shell (axis = local X) -->
@@ -15375,38 +16011,21 @@ AFRAME.registerComponent('seam-grain-fringe', {
                                 gain: 0.52"
               cylindrical-clip-multi="targets: #sphere_dome_cutref, #tunnel_04_cutref; radius: 1.60; halfLength: 6.00" freeze-static-mesh></a-entity>
 
+
+    <!-- === Soul Orb: milky volumetric presence core (no UI / random seed per load) === -->
+    <a-sphere id="sphere_dome_soul_orb"
+              orbital-pointlights="radius: 2.5; height: 0.35; speed: 0.22; distance: 12.5; decay: 2.0; intensity: 1.15; count: 3"
+              position="-9.40 1.85 0.00"
+              radius="1.25"
+              material="shader: soulorb; transparent: false; opacity: 1.0; side: double; depthWrite: true"
+              soulorb-seed
+              animation__bob="property: position; dir: alternate; dur: 4200; easing: easeInOutSine; loop: true; from: -9.40 1.75 0.00; to: -9.40 2.05 0.00"
+              animation__slowspin="property: rotation; dur: 18000; easing: linear; loop: true; from: 0 0 0; to: 0 360 0">
+    </a-sphere>
+
     <!-- Sphere dome boundary colliders (prevent walking through the shell). Opening toward tunnel (+X). -->
-    <!-- Floating light sphere (moved from aya_dome; scaled 0.25 for smaller sphere_dome). -->
-    <!-- NOTE: This is the ONLY light source inside sphere_dome (beams + core). Keep light ranges tight for performance. -->
-    <a-entity id="sphere_dome_floating_sphere"
-              position="-9.40 3.85 0"
-              scale="0.25 0.25 0.25"
-              shadow="cast:false; receive:false"
-              sin-bob="baseY: 3.85; amp: 0.07; speed: 0.05"
-              spin="speed: 1.35; axis: y"
-              perforated-sphere-light="radius: 1.52; holes: 77; holeMode: none; holeSize: 0.0040; beamMin: 4.8; beamMax: 80; beamRadius: 0.036; baseOpacity: 0.48; blue: #7cc9ff; white: #ffffff; flicker: 1.25; wobble: 0.085; innerFrac: 0.40; spillBoost: 3.00; glowBoost: 3.00; lightCount: 0; lightAngle: 0.10; lightReach: 26; impactReach: 80; impactDots: true; impactSize: 0.90; impactOpacity: 0.40">
-      <a-entity id="beam_dust" beam-dust></a-entity>
-      <!-- Visible core (spherical flame like the torches, but stronger) -->
-      <a-entity id="sphere_core_flame"
-                position="0 0 0"
-                futuristic-flame="radius: 0.54; height: 0.92; hue: 205; intensity: 7.0"
-                animation__core_pulse="property: scale; dir: alternate; dur: 2200; easing: easeInOutSine; loop: true; to: 1.06 1.06 1.06"></a-entity>
-      <!-- Sphere shell (single mesh + shader gap; stable silhouette from all angles) -->
-      <a-entity id="sphere_shell"
-                geometry="primitive: sphere; radius: 1.52; segmentsWidth: 72; segmentsHeight: 54"
-                position="0 0 0"
-                material="shader: standard; src: #metalElevatorColor; normalMap: #metalElevatorNormal; roughnessMap: #metalElevatorRough; metalnessMap: #metalElevatorMetalness; displacementMap: #metalElevatorDisplacement; repeat: 1 1; metalness: 1; roughness: 0.35; displacementScale: 0.03; displacementBias: 0; emissive: #000000; emissiveIntensity: 0; side: double"
-                pool-sheen-fresnel="color: #a8e5ff; intensity: 0.55; fresnelPower: 3.4; radius: 1.52"
-                render-order="value: 20"></a-entity>
-
-    </a-entity>
-
-    <!-- Sphere collision: prevents walking through the floating sphere volume -->
-    <a-cylinder id="sphere_dome_sphere_collider" class="nocollider" visible="false"
-                radius="0.39" height="2.0" position="-9.40 3.85 0"></a-cylinder>
-
-
-    <!-- Minimal mouth dressing (inside the new dome) to soften the cut edge -->
+</a-entity>
+<!-- Minimal mouth dressing (inside the new dome) to soften the cut edge -->
     <a-entity id="sphere_dome_mouth_dressing" position="0 1.20 0" rotation="0 90 0" freeze-static-mesh>
 </a-entity>
 
@@ -15442,7 +16061,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
                 shadow="cast:false; receive:true" uv2-from-uv></a-entity>
 
       <a-entity id="dome3_portal_fillet"
-                geometry="primitive: torus; radius: 1.34; radiusTubular: 0.09; segmentsRadial: 24; segmentsTubular: 160"
+                geometry="primitive: torus; radius: 1.34; radiusTubular: 0.09; segmentsRadial: 24; segmentsTubular: 96"
                 position="0 -0.025 0.050"
                 scale="1.000 0.970 0.750"
                 organic-rim="amp: 0.03; freq: 9.0; seed: 301; zAmp: 0.015"
@@ -15641,7 +16260,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
                 shadow="cast:false; receive:true" uv2-from-uv visible="false"></a-entity>
 
       <a-entity id="nde_portal03_fillet"
-                geometry="primitive: torus; radius: 1.34; radiusTubular: 0.09; segmentsRadial: 24; segmentsTubular: 160"
+                geometry="primitive: torus; radius: 1.34; radiusTubular: 0.09; segmentsRadial: 24; segmentsTubular: 96"
                 position="0 0 0.05"
                 scale="1 1 0.75"
                 organic-rim="amp: 0.03; freq: 9.0; seed: 701; zAmp: 0.015"
@@ -16007,7 +16626,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
                   shadow="cast:false; receive:true" uv2-from-uv></a-entity>
 
     <a-entity id="entrance_portal_fillet"
-                  geometry="primitive: torus; radius: 1.34; radiusTubular: 0.09; segmentsRadial: 24; segmentsTubular: 160"
+                  geometry="primitive: torus; radius: 1.34; radiusTubular: 0.09; segmentsRadial: 24; segmentsTubular: 96"
                   position="0 0 -0.05"
                   scale="1 1 0.75"
                   organic-rim="amp: 0.03; freq: 9.0; seed: 101; zAmp: 0.015"
@@ -16510,7 +17129,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
                 position="0 0 0"
                 rotation="0 90 0">
         <a-entity id="tunnel_04_near_portal_fillet"
-                geometry="primitive: torus; radius: 1.36; radiusTubular: 0.09; segmentsRadial: 24; segmentsTubular: 160"
+                geometry="primitive: torus; radius: 1.36; radiusTubular: 0.09; segmentsRadial: 24; segmentsTubular: 96"
                 position="0 -0.03 0.01"
                 scale="1 1 0.75"
                 organic-rim="amp: 0.03; freq: 9.0; seed: 378; zAmp: 0.015"
@@ -16568,7 +17187,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
 
         <!-- Inner fillet ring to soften the lip -->
         <a-entity id="tunnel_04_portal_far_fillet_ring"
-                geometry="primitive: torus; radius: 1.28; radiusTubular: 0.055; segmentsRadial: 24; segmentsTubular: 160" rotation="0 0 0"
+                geometry="primitive: torus; radius: 1.28; radiusTubular: 0.055; segmentsRadial: 24; segmentsTubular: 96" rotation="0 0 0"
                 position="0 -0.03 0.00"
                 scale="1 1 0.45"
                 organic-rim="amp: 0.015; freq: 9.0; seed: 101; zAmp: 0.008"
@@ -16832,7 +17451,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
                   shadow="cast:false; receive:true" uv2-from-uv></a-entity>
 
         <a-entity id="nde5_portal_fillet"
-                  geometry="primitive: torus; radius: 1.34; radiusTubular: 0.09; segmentsRadial: 24; segmentsTubular: 160"
+                  geometry="primitive: torus; radius: 1.34; radiusTubular: 0.09; segmentsRadial: 24; segmentsTubular: 96"
                   position="0 -0.026 0.050"
                   scale="0.995 1.000 0.750"
                   organic-rim="amp: 0.03; freq: 9.0; seed: 801; zAmp: 0.015"
@@ -16891,7 +17510,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
 
         <!-- Inner fillet ring to soften the lip -->
         <a-entity id="tunnel_05_portal_far_fillet_ring"
-                geometry="primitive: torus; radius: 1.28; radiusTubular: 0.055; segmentsRadial: 24; segmentsTubular: 160" rotation="0 0 0"
+                geometry="primitive: torus; radius: 1.28; radiusTubular: 0.055; segmentsRadial: 24; segmentsTubular: 96" rotation="0 0 0"
                 position="0 -0.03 0.00"
                 scale="1 1 0.45"
                 organic-rim="amp: 0.015; freq: 9.0; seed: 101; zAmp: 0.008"
@@ -16926,7 +17545,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
       <!-- Blend collar to give the rim thickness (prevents a thin/flat read) -->
 <!-- Inner fillet ring to soften the lip -->
       <a-entity id="tunnel_05_portal_near_fillet_ring"
-                geometry="primitive: torus; radius: 1.28; radiusTubular: 0.055; segmentsRadial: 24; segmentsTubular: 160" rotation="0 0 0"
+                geometry="primitive: torus; radius: 1.28; radiusTubular: 0.055; segmentsRadial: 24; segmentsTubular: 96" rotation="0 0 0"
                 position="0 -0.03 0.00"
                 scale="1 1 0.30"
                 organic-rim="amp: 0.015; freq: 9.0; seed: 101; zAmp: 0.008"
@@ -17156,7 +17775,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
                 position="-2.2000 0 0"
                 rotation="0 90 0">
         <a-entity id="tunnel_06_near_portal_fillet"
-                geometry="primitive: torus; radius: 1.36; radiusTubular: 0.09; segmentsRadial: 24; segmentsTubular: 160"
+                geometry="primitive: torus; radius: 1.36; radiusTubular: 0.09; segmentsRadial: 24; segmentsTubular: 96"
                 position="0 -0.03 0.01"
                 scale="1 1 0.75"
                 organic-rim="amp: 0.03; freq: 9.0; seed: 476; zAmp: 0.015"
@@ -17199,7 +17818,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
       <!-- Blend collar to give the rim thickness (prevents a thin/flat read) -->
 <!-- Inner fillet ring to soften the lip -->
       <a-entity id="tunnel_06_portal_far_fillet_ring"
-                geometry="primitive: torus; radius: 1.28; radiusTubular: 0.055; segmentsRadial: 24; segmentsTubular: 160" rotation="0 0 0"
+                geometry="primitive: torus; radius: 1.28; radiusTubular: 0.055; segmentsRadial: 24; segmentsTubular: 96" rotation="0 0 0"
                 position="0 -0.03 0.00"
                 scale="1 1 0.45"
                 organic-rim="amp: 0.015; freq: 9.0; seed: 101; zAmp: 0.008"
@@ -17359,7 +17978,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
               uv2-from-uv></a-ring>
 
       <a-entity id="end_chamber_06_fillet_ring"
-                geometry="primitive: torus; radius: 1.28; radiusTubular: 0.06; segmentsRadial: 24; segmentsTubular: 160"
+                geometry="primitive: torus; radius: 1.28; radiusTubular: 0.06; segmentsRadial: 24; segmentsTubular: 96"
                 position="0 -0.03 0.00"
                 scale="1 1 0.55"
                 material="shader: standard; color: #ffffff; src: #moonDiffuse; normalMap: #moonNormal; roughnessMap: #moonRough; aoMap: #moonAO; metalness: 0; roughness: 1; repeat: 10 7; normalScale: 0.9 0.9; side: double; aoMapIntensity: 0.25; emissive: #0f0f0f; emissiveIntensity: 0.08"
@@ -17408,7 +18027,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
           collider-ring="center: 0 0 0; radiusX: 5.95; radiusZ: 5.95; segments: 84; height: 4.2; thickness: 0.34; y: 0.55; openRanges: 330-30; layers: 2; overlap: 1.20"></a-entity>
 <!-- Portal floor fillet (softens the seam at the tunnel threshold) -->
 <a-entity id="end_chamber_06_portal_floor_fillet_ring"
-          geometry="primitive: torus; radius: 1.28; radiusTubular: 0.055; segmentsRadial: 24; segmentsTubular: 160"
+          geometry="primitive: torus; radius: 1.28; radiusTubular: 0.055; segmentsRadial: 24; segmentsTubular: 96"
           position="5.00 -0.03 0.00"
           rotation="0 90 0"
           scale="1 1 0.45"
@@ -17814,58 +18433,159 @@ AFRAME.registerComponent('adaptive-resolution', {
     startScale: {type: 'number', default: 0.78},
     minScale:   {type: 'number', default: 0.55},
     maxScale:   {type: 'number', default: 1.00},
-    dprCap:     {type: 'number', default: 1.75},
+    dprCap:     {type: 'number', default: 1.25},
     adjustEveryMs: {type: 'int', default: 650},
     downStep:   {type: 'number', default: 0.06},
     upStep:     {type: 'number', default: 0.03},
     downFps:    {type: 'number', default: 45},
     upFps:      {type: 'number', default: 58}
   },
+
   init: function () {
-    this._scale = this.data.startScale;
+    this._q = this._clamp(this.data.startScale, this.data.minScale, this.data.maxScale);
+
+    // Smoothed frametime + spike catcher (better than raw FPS averages for stutter).
+    this._emaDt = 16.6;
     this._accMs = 0;
     this._frames = 0;
-    this._lastAdjust = 0;
+
+    // Patched postFX targets (EffectComposer + bloom) when present.
+    this._patched = false;
+    this._scaleRef = { scale: this._q };
+    this._lastAppliedQ = -1;
+
     this._apply(true);
   },
-  _apply: function (force) {
+
+  _clamp: function (v, a, b) {
+    return Math.max(a, Math.min(b, v));
+  },
+
+  _getRenderer: function () {
     const sceneEl = this.el.sceneEl;
-    const renderer = sceneEl && sceneEl.renderer;
+    return sceneEl && sceneEl.renderer;
+  },
+
+  _getPostFX: function () {
+    const sceneEl = this.el.sceneEl;
+    return (sceneEl && sceneEl.components && sceneEl.components['realism-postfx']) || null;
+  },
+
+  _ensurePatched: function () {
+    if (this._patched) return;
+
+    const postfx = this._getPostFX();
+    if (!postfx || !postfx.composer) return;
+
+    const composer = postfx.composer;
+    const bloom = postfx._bloom;
+
+    // Patch composer.setSize so any existing resize handlers keep respecting our scale.
+    if (!composer.__adaptiveOrigSetSize) {
+      composer.__adaptiveOrigSetSize = composer.setSize.bind(composer);
+      const scaleRef = this._scaleRef;
+      composer.setSize = function (w, h) {
+        let ww = w, hh = h;
+        // Be tolerant if something passes a Vector2-like object.
+        if (w && typeof w === 'object' && 'x' in w && 'y' in w) {
+          ww = w.x; hh = w.y;
+        }
+        const s = Math.max(0.35, Math.min(1.0, scaleRef.scale || 1.0));
+        return composer.__adaptiveOrigSetSize(
+          Math.max(1, Math.floor(ww * s)),
+          Math.max(1, Math.floor(hh * s))
+        );
+      };
+    }
+
+    // Patch bloom.setSize as well (some builds call it on resize).
+    if (bloom && bloom.setSize && !bloom.__adaptiveOrigSetSize) {
+      bloom.__adaptiveOrigSetSize = bloom.setSize.bind(bloom);
+      const scaleRef = this._scaleRef;
+      bloom.setSize = function (w, h) {
+        const s = Math.max(0.35, Math.min(1.0, scaleRef.scale || 1.0));
+        return bloom.__adaptiveOrigSetSize(
+          Math.max(1, Math.floor(w * s)),
+          Math.max(1, Math.floor(h * s))
+        );
+      };
+    }
+
+    this._patched = true;
+  },
+
+  _apply: function (force) {
+    const renderer = this._getRenderer();
     if (!renderer) return;
 
-    const dpr = Math.min(window.devicePixelRatio || 1, this.data.dprCap);
-    const pr = Math.max(this.data.minScale, Math.min(this._scale, this.data.maxScale)) * dpr;
+    const q = this._clamp(this._q, this.data.minScale, this.data.maxScale);
 
     // Avoid noisy updates.
-    if (!force && this._lastPR && Math.abs(pr - this._lastPR) < 0.02) return;
-    this._lastPR = pr;
+    if (!force && Math.abs(q - this._lastAppliedQ) < 0.015) return;
+    this._lastAppliedQ = q;
+    this._scaleRef.scale = q;
 
-    try { renderer.setPixelRatio(pr); } catch (e) {}
-    // Force postFX/composer to resync sizes.
-    try { window.dispatchEvent(new Event('resize')); } catch (e) {}
+    // If we have postFX, controlling composer target size is the big win.
+    // (Composer render targets are often the real GPU bottleneck, more than renderer DPR.)
+    this._ensurePatched();
+    const postfx = this._getPostFX();
+
+    try {
+      const dpr = Math.min(window.devicePixelRatio || 1, this.data.dprCap);
+
+      // Cap canvas DPR to reduce final full-screen pass cost on high-DPR screens.
+      // (Does not change scene content; only internal render resolution.)
+      const canvasPR = (q > 0.98) ? dpr : Math.min(dpr, 0.85);
+      renderer.setPixelRatio(canvasPR);
+
+      if (postfx && postfx.composer) {
+        // Trigger a resize through the existing handler path (now scaled).
+        const size = renderer.getSize(new THREE.Vector2());
+        postfx.composer.setSize(size.x, size.y);
+
+        if (postfx._bloom && postfx._bloom.setSize) {
+          postfx._bloom.setSize(Math.floor(size.x * 0.6), Math.floor(size.y * 0.6));
+        }
+      }
+    } catch (e) {}
   },
+
   tick: function (time, dt) {
-    // time is ms, dt is ms
     dt = dt || 16;
+    // EMA of dt (stable, reacts to spikes).
+    this._emaDt = this._emaDt * 0.92 + dt * 0.08;
+
     this._accMs += dt;
     this._frames += 1;
 
+    // Fast path: catch ugly spikes immediately.
+    if (dt > 34 && this._q > this.data.minScale) {
+      this._q = this._clamp(this._q - this.data.downStep * 1.35, this.data.minScale, this.data.maxScale);
+      this._apply(false);
+      return;
+    }
+
     if (this._accMs < this.data.adjustEveryMs) return;
 
-    const fps = (this._frames / this._accMs) * 1000;
+    const fpsAvg = (this._frames / this._accMs) * 1000;
+    const fpsSmooth = 1000 / Math.max(8, this._emaDt);
+
     this._accMs = 0;
     this._frames = 0;
 
-    // Adjust scale conservatively to avoid visible oscillation.
-    if (fps < this.data.downFps && this._scale > this.data.minScale) {
-      this._scale = Math.max(this.data.minScale, this._scale - this.data.downStep);
+    // Adjust conservatively to avoid visible pumping, but make downshifts decisive.
+    const fps = Math.min(fpsAvg, fpsSmooth);
+
+    if (fps < this.data.downFps && this._q > this.data.minScale) {
+      this._q = this._clamp(this._q - this.data.downStep, this.data.minScale, this.data.maxScale);
       this._apply(false);
-    } else if (fps > this.data.upFps && this._scale < this.data.maxScale) {
-      this._scale = Math.min(this.data.maxScale, this._scale + this.data.upStep);
+    } else if (fps > this.data.upFps && this._q < this.data.maxScale) {
+      this._q = this._clamp(this._q + this.data.upStep, this.data.minScale, this.data.maxScale);
       this._apply(false);
     }
   }
 });
+
 
 // Freeze world transforms for heavy static geometry (no visual change, reduces per-frame matrix work).
 AFRAME.registerComponent('freeze-static-mesh', {
