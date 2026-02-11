@@ -192,6 +192,196 @@ AFRAME.registerComponent('no-fog', {
 
 
 // Improve Earth texture sampling only on the Earth mesh (anisotropy + filtering).
+
+// Autoplay the first animation clip embedded in a glTF/GLB (e.g., seated Mixamo exports).
+AFRAME.registerComponent('autoplay-gltf-anim', {
+  init: function () {
+    this.mixer = null;
+    this.action = null;
+
+    this.el.addEventListener('model-loaded', (e) => {
+      const model = e.detail && e.detail.model;
+      const clips = (model && model.animations) ? model.animations : [];
+      if (!clips || !clips.length) return;
+
+      this.mixer = new THREE.AnimationMixer(model);
+      this.action = this.mixer.clipAction(clips[0]);
+      this.action.setLoop(THREE.LoopRepeat);
+      this.action.play();
+    });
+  },
+
+  tick: function (time, timeDelta) {
+    if (!this.mixer) return;
+    this.mixer.update(timeDelta / 1000);
+  }
+});
+
+// Mixamo / NPC material matte fix (ported from index.html).
+AFRAME.registerComponent('mixamo-mat-fix', {
+  schema: {
+    desat: { type: 'number', default: 0.18 },   // 0..1
+    darken: { type: 'number', default: 0.06 },  // 0..1
+    matte: { type: 'number', default: 1.0 }     // 0..1 (higher = less specular)
+  },
+  init: function () {
+    this.el.addEventListener('model-loaded', () => {
+      const obj = this.el.getObject3D('mesh');
+      
+
+// Snap NPC meshes so their lowest point sits on the entity's local Y=0 (helps Mixamo-origin models stand on floors)
+AFRAME.registerComponent('npc-ground', {
+  init: function () {
+    this.el.addEventListener('model-loaded', () => {
+      const obj = this.el.getObject3D('mesh');
+      if (!obj || !THREE || !THREE.Box3) return;
+      const box = new THREE.Box3().setFromObject(obj);
+      if (!isFinite(box.min.y)) return;
+      obj.position.y -= box.min.y;
+    });
+  }
+});
+if (!obj) return;
+
+      obj.traverse((o) => {
+        if (!o.isMesh || !o.material) return;
+
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        mats.forEach((m) => {
+          if (!m) return;
+
+          // Always render front faces for character meshes (helps with "inside head" artifacts).
+          m.side = THREE.FrontSide;
+
+          // Prefer alphaTest cutouts over blending (hair cards / lashes).
+          const name = (m.name || '').toLowerCase();
+          const hasAlphaMap = !!m.alphaMap;
+          const isCutout = hasAlphaMap || name.includes('hair') || name.includes('lash') || name.includes('brow');
+          if (isCutout) {
+            m.transparent = false;
+            m.alphaTest = Math.max(0.35, m.alphaTest || 0.0);
+            m.depthWrite = true;
+            m.opacity = 1.0;
+          } else {
+            m.transparent = false;
+            m.opacity = 1.0;
+            m.alphaTest = 0.0;
+            m.depthWrite = true;
+          }
+
+          // --- Kill "plastic" look -------------------------------------------------
+          const matte = Math.min(1, Math.max(0, this.data.matte));
+
+          // Standard/Physical materials
+          if ('roughness' in m) m.roughness = 1.0;                // fully rough
+          if ('metalness' in m) m.metalness = 0.0;                // no metal
+          if ('envMapIntensity' in m) m.envMapIntensity = 0.0;     // no reflections
+
+          // Remove glossy maps that can re-introduce shine even when roughness is high.
+          if (m.roughnessMap) m.roughnessMap = null;
+          if (m.metalnessMap) m.metalnessMap = null;
+          if (m.specularMap) m.specularMap = null;
+          if (m.glossinessMap) m.glossinessMap = null;
+          if (m.envMap) m.envMap = null;
+          // Tone down normal micro-facets a bit (helps 'plasticky' cloth close-up).
+          if (m.normalScale && m.normalScale.set) {
+            const nsx = (m.normalScale.x != null) ? m.normalScale.x : 1;
+            const nsy = (m.normalScale.y != null) ? m.normalScale.y : 1;
+            m.normalScale.set(nsx * 0.35, nsy * 0.35);
+          }
+
+          // Physical extras
+          if ('clearcoat' in m) m.clearcoat = 0.0;
+          if ('clearcoatRoughness' in m) m.clearcoatRoughness = 1.0;
+          if ('sheen' in m) m.sheen = 0.0;
+          if ('sheenRoughness' in m) m.sheenRoughness = 1.0;
+          if ('transmission' in m) m.transmission = 0.0;
+          if ('ior' in m) m.ior = 1.0;
+          if ('iridescence' in m) m.iridescence = 0.0;
+          if ('specularIntensity' in m) m.specularIntensity = 0.0;
+
+          // Phong/Lambert legacy
+          if ('shininess' in m) m.shininess = Math.min(m.shininess || 0, 2);
+          if (m.specular && m.specular.setRGB) m.specular.setRGB(0.02, 0.02, 0.02);
+          if ('reflectivity' in m) m.reflectivity = 0.0;
+
+          // Slight desaturation/darken of material tint (helps even when textures dominate).
+          if (m.color) {
+            const c = m.color.clone();
+            const hsl = {};
+            c.getHSL(hsl);
+            hsl.s = Math.max(0.0, hsl.s * (1.0 - this.data.desat));
+            hsl.l = Math.max(0.0, hsl.l * (1.0 - this.data.darken));
+            m.color.setHSL(hsl.h, hsl.s, hsl.l);
+          }
+
+          if (m.emissive) m.emissive.multiplyScalar(0.35);
+
+          // Extra safety: ensure "matte" intent wins even if the loader sets odd values.
+          if ('roughness' in m) m.roughness = Math.max(m.roughness || 0, 0.9);
+          if ('metalness' in m) m.metalness = Math.min(m.metalness || 0, 0.05);
+          if ('envMapIntensity' in m) m.envMapIntensity = 0.0;
+
+          // Optional scalar hook (kept for parity; currently matte=1 means max flattening).
+          void(matte);
+
+          m.needsUpdate = true;
+        });
+
+      });
+    });
+  }
+});
+
+// Automatically apply mixamo-mat-fix to all NPCs now and later (future-proof).
+AFRAME.registerComponent('npc-matte-auto', {
+  schema: {
+    selector: { type: 'string', default: '.npc[gltf-model]' },
+    params: { type: 'string', default: 'desat: 0.18; darken: 0.06; matte: 1.0' }
+  },
+  init: function () {
+    const applyOne = (el) => {
+      if (!el || !el.setAttribute) return;
+      if (el.hasAttribute('mixamo-mat-fix')) return;
+      el.setAttribute('mixamo-mat-fix', this.data.params);
+    };
+
+    const scan = () => {
+      try {
+        this.el.querySelectorAll(this.data.selector).forEach(applyOne);
+      } catch (e) {}
+    };
+
+    // Run once scene is ready.
+    if (this.el.hasLoaded) scan();
+    else this.el.addEventListener('loaded', scan);
+
+    // Watch for NPCs added later.
+    const obs = new MutationObserver((mutations) => {
+      for (const mu of mutations) {
+        for (const node of mu.addedNodes || []) {
+          if (!node || node.nodeType !== 1) continue;
+          const el = node;
+          try {
+            if (el.matches && el.matches(this.data.selector)) applyOne(el);
+            if (el.querySelectorAll) el.querySelectorAll(this.data.selector).forEach(applyOne);
+          } catch (e) {}
+        }
+      }
+    });
+    obs.observe(this.el, { childList: true, subtree: true });
+    this._npcMatObs = obs;
+  },
+  remove: function () {
+    if (this._npcMatObs) {
+      try { this._npcMatObs.disconnect(); } catch (e) {}
+      this._npcMatObs = null;
+    }
+  }
+});
+
+
+
 AFRAME.registerComponent('earth-texture-quality', {
   init: function () {
     const el = this.el;
@@ -753,6 +943,317 @@ float causticField(vec2 p){
 })();
 </script>
 
+<script>
+/* === Aya Dome spatial ambience (progressive fade to 0 at 40m) === */
+AFRAME.registerComponent('aya-dome-audio', {
+  schema: { maxDistance: { type: 'number', default: 40 } },
+  init: function () {
+    this._camEl = null;
+    this._vCam = new THREE.Vector3();
+    this._vSrc = new THREE.Vector3();
+
+    const scene = this.el.sceneEl;
+
+    const grabCam = () => {
+      try { this._camEl = scene && scene.camera && scene.camera.el; } catch (e) {}
+    };
+
+    const resumeAudio = async () => {
+      try {
+        const ctx = (scene && scene.audioListener && scene.audioListener.context) ||
+                    (AFRAME.audioContext ? AFRAME.audioContext : null);
+        if (ctx && ctx.state === 'suspended') await ctx.resume();
+      } catch (e) {}
+    };
+
+    this._tryPlay = async () => {
+      if (window.__AYA_PRELOAD_MODE) return;
+      await resumeAudio();
+      const s = this.el.components && this.el.components.sound;
+      if (!s) return;
+      try {
+        if (!s.isPlaying) s.playSound();
+      } catch (e) {}
+    };
+
+    if (scene && scene.hasLoaded) grabCam();
+    else if (scene) scene.addEventListener('loaded', grabCam, { once: true });
+
+    // Try as soon as the sound is loaded, then fall back to user gesture (autoplay policies).
+    this.el.addEventListener('sound-loaded', this._tryPlay);
+    window.addEventListener('click', this._tryPlay, { passive: true });
+    window.addEventListener('touchstart', this._tryPlay, { passive: true });
+    window.addEventListener('keydown', this._tryPlay, { passive: true });
+  },
+
+  tick: function () {
+    const s = this.el.components && this.el.components.sound;
+    if (!s) return;
+
+    const camEl = this._camEl || (this.el.sceneEl && this.el.sceneEl.camera && this.el.sceneEl.camera.el);
+    if (!camEl || !camEl.object3D) return;
+
+    camEl.object3D.getWorldPosition(this._vCam);
+    this.el.object3D.getWorldPosition(this._vSrc);
+
+    const d = this._vCam.distanceTo(this._vSrc);
+    const md = Math.max(0.001, this.data.maxDistance);
+
+    // Linear fade: 1.0 at 0m -> 0.0 at md (hard silent beyond).
+    let v = 1.0 - (d / md);
+    if (v < 0) v = 0;
+    if (v > 1) v = 1;
+
+    try { s.setVolume(v); } catch (e) {
+      try { this.el.setAttribute('sound', 'volume', v); } catch (err) {}
+    }
+  },
+
+  remove: function () {
+    if (this._tryPlay) {
+      this.el.removeEventListener('sound-loaded', this._tryPlay);
+      window.removeEventListener('click', this._tryPlay);
+      window.removeEventListener('touchstart', this._tryPlay);
+      window.removeEventListener('keydown', this._tryPlay);
+    }
+  }
+});
+</script>
+
+<script>
+/* === NDE Dome spatial ambience (progressive fade to 0 at 40m) === */
+AFRAME.registerComponent('nde-dome-audio', {
+  schema: { maxDistance: { type: 'number', default: 40 } },
+  init: function () {
+    this._camEl = null;
+    this._vCam = new THREE.Vector3();
+    this._vSrc = new THREE.Vector3();
+
+    const scene = this.el.sceneEl;
+
+    const grabCam = () => {
+      try { this._camEl = scene && scene.camera && scene.camera.el; } catch (e) {}
+    };
+
+    const resumeAudio = async () => {
+      try {
+        const ctx = (scene && scene.audioListener && scene.audioListener.context) ||
+                    (AFRAME.audioContext ? AFRAME.audioContext : null);
+        if (ctx && ctx.state === 'suspended') await ctx.resume();
+      } catch (e) {}
+    };
+
+    this._tryPlay = async () => {
+      if (window.__AYA_PRELOAD_MODE) return;
+      await resumeAudio();
+      const s = this.el.components && this.el.components.sound;
+      if (!s) return;
+      try {
+        if (!s.isPlaying) s.playSound();
+      } catch (e) {}
+    };
+
+    if (scene && scene.hasLoaded) grabCam();
+    else if (scene) scene.addEventListener('loaded', grabCam, { once: true });
+
+    // Try as soon as the sound is loaded, then fall back to user gesture (autoplay policies).
+    this.el.addEventListener('sound-loaded', this._tryPlay);
+    window.addEventListener('click', this._tryPlay, { passive: true });
+    window.addEventListener('touchstart', this._tryPlay, { passive: true });
+    window.addEventListener('keydown', this._tryPlay, { passive: true });
+  },
+
+  tick: function () {
+    const s = this.el.components && this.el.components.sound;
+    if (!s) return;
+
+    const camEl = this._camEl || (this.el.sceneEl && this.el.sceneEl.camera && this.el.sceneEl.camera.el);
+    if (!camEl || !camEl.object3D) return;
+
+    camEl.object3D.getWorldPosition(this._vCam);
+    this.el.object3D.getWorldPosition(this._vSrc);
+
+    const d = this._vCam.distanceTo(this._vSrc);
+    const md = Math.max(0.001, this.data.maxDistance);
+
+    // Linear fade: 1.0 at 0m -> 0.0 at md (hard silent beyond).
+    let v = 1.0 - (d / md);
+    if (v < 0) v = 0;
+    if (v > 1) v = 1;
+
+    try { s.setVolume(v); } catch (e) {
+      try { this.el.setAttribute('sound', 'volume', v); } catch (err) {}
+    }
+  },
+
+  remove: function () {
+    if (this._tryPlay) {
+      this.el.removeEventListener('sound-loaded', this._tryPlay);
+      window.removeEventListener('click', this._tryPlay);
+      window.removeEventListener('touchstart', this._tryPlay);
+      window.removeEventListener('keydown', this._tryPlay);
+    }
+  }
+});
+
+
+/* === Sphere Dome spatial ambience (progressive fade to 0 at 40m) === */
+AFRAME.registerComponent('sphere-dome-audio', {
+  schema: { maxDistance: { type: 'number', default: 40 } },
+  init: function () {
+    this._camEl = null;
+    this._vCam = new THREE.Vector3();
+    this._vSrc = new THREE.Vector3();
+
+    const scene = this.el.sceneEl;
+
+    const grabCam = () => {
+      try { this._camEl = scene && scene.camera && scene.camera.el; } catch (e) {}
+    };
+
+    const resumeAudio = async () => {
+      try {
+        const ctx = (scene && scene.audioListener && scene.audioListener.context) ||
+                    (AFRAME.audioContext ? AFRAME.audioContext : null);
+        if (ctx && ctx.state === 'suspended') await ctx.resume();
+      } catch (e) {}
+    };
+
+    this._tryPlay = async () => {
+      if (window.__AYA_PRELOAD_MODE) return;
+      await resumeAudio();
+      const s = this.el.components && this.el.components.sound;
+      if (!s) return;
+      try {
+        if (!s.isPlaying) s.playSound();
+      } catch (e) {}
+    };
+
+    if (scene && scene.hasLoaded) grabCam();
+    else if (scene) scene.addEventListener('loaded', grabCam, { once: true });
+
+    // Try as soon as the sound is loaded, then fall back to user gesture (autoplay policies).
+    this.el.addEventListener('sound-loaded', this._tryPlay);
+    window.addEventListener('click', this._tryPlay, { passive: true });
+    window.addEventListener('touchstart', this._tryPlay, { passive: true });
+    window.addEventListener('keydown', this._tryPlay, { passive: true });
+  },
+
+  tick: function () {
+    const s = this.el.components && this.el.components.sound;
+    if (!s) return;
+
+    const camEl = this._camEl || (this.el.sceneEl && this.el.sceneEl.camera && this.el.sceneEl.camera.el);
+    if (!camEl || !camEl.object3D) return;
+
+    camEl.object3D.getWorldPosition(this._vCam);
+    this.el.object3D.getWorldPosition(this._vSrc);
+
+    const d = this._vCam.distanceTo(this._vSrc);
+    const md = Math.max(0.001, this.data.maxDistance);
+
+    // Linear fade: 1.0 at 0m -> 0.0 at md (hard silent beyond).
+    let v = 1.0 - (d / md);
+    if (v < 0) v = 0;
+    if (v > 1) v = 1;
+
+    try { s.setVolume(v); } catch (e) {
+      try { this.el.setAttribute('sound', 'volume', v); } catch (err) {}
+    }
+  },
+
+  remove: function () {
+    if (this._tryPlay) {
+      this.el.removeEventListener('sound-loaded', this._tryPlay);
+      window.removeEventListener('click', this._tryPlay);
+      window.removeEventListener('touchstart', this._tryPlay);
+      window.removeEventListener('keydown', this._tryPlay);
+    }
+  }
+});
+</script>
+
+<style id="quitUiStyles">
+  /* Quit UI */
+  #quitShell{
+    position: fixed;
+    left: 14px;
+    bottom: 14px;
+    z-index: 220;
+  }
+  #quitBtn{
+    appearance:none;
+    border: 1px solid rgba(255,255,255,0.16);
+    background: rgba(0,0,0,0.35);
+    color: rgba(255,255,255,0.85);
+    padding: 8px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    cursor: pointer;
+    backdrop-filter: blur(6px);
+  }
+  #quitBtn:hover{ border-color: rgba(255,255,255,0.32); color: rgba(255,255,255,0.95); }
+
+  #quitConfirm{
+    position: fixed; inset: 0;
+    display:none;
+    align-items:center;
+    justify-content:center;
+    background: rgba(0,0,0,0.62);
+    z-index: 230;
+  }
+  #quitConfirm.show{ display:flex; }
+  #quitCard{
+    width: min(420px, calc(100vw - 48px));
+    background: rgba(0,0,0,0.78);
+    border: 1px solid rgba(255,255,255,0.16);
+    border-radius: 14px;
+    padding: 18px;
+    color: rgba(255,255,255,0.92);
+    box-shadow: 0 22px 70px rgba(0,0,0,0.62);
+  }
+  #quitCard h3{
+    margin: 0 0 8px 0;
+    font-size: 14px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+  }
+  #quitCard p{
+    margin: 0 0 14px 0;
+    font-size: 13px;
+    opacity: 0.85;
+    line-height: 1.35;
+  }
+  #quitActions{
+    display:flex;
+    gap: 10px;
+    justify-content:flex-end;
+  }
+  .qbtn{
+    appearance:none;
+    border: 1px solid rgba(255,255,255,0.18);
+    background: rgba(255,255,255,0.10);
+    color: rgba(255,255,255,0.92);
+    padding: 9px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .qbtn.primary{
+    background: rgba(255,255,255,0.18);
+    border-color: rgba(255,255,255,0.32);
+    color: rgba(255,255,255,0.96);
+  }
+  /* Match intro UI font stack (safe even if those nodes don't exist here) */
+  #bootScreen, #introScreen, #quitConfirm {
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  }
+</style>
+
 </head>
 <body>
 
@@ -769,6 +1270,20 @@ float causticField(vec2 p){
   </div>
 </div>
 
+
+<div id="quitShell">
+<button id="quitBtn" type="button">QUIT</button>
+</div>
+<div aria-hidden="true" id="quitConfirm">
+<div aria-label="Quit experience" aria-modal="true" id="quitCard" role="dialog">
+<h3>Quit experience</h3>
+<p>You’re about to leave the 3D experience.</p>
+<div id="quitActions">
+<button class="qbtn" id="quitCancel" type="button">Cancel</button>
+<button class="qbtn primary" id="quitConfirmBtn" type="button">Quit</button>
+</div>
+</div>
+</div>
 
 <script>
 // Force deterministic draw ordering for layered liquid.
@@ -3631,7 +4146,7 @@ AFRAME.registerComponent('mercury-ibl-silver', {
       g.fillRect(0, 0, w, h);
 
       // Bright silver streaks (mercury "flow")
-      g.globalAlpha = 0.26;
+      g.globalAlpha = 0.35;
       g.fillStyle = '#ffffff';
       for (let i = 0; i < 16; i++) {
         const y = Math.random() * h;
@@ -3643,7 +4158,7 @@ AFRAME.registerComponent('mercury-ibl-silver', {
       // Gentle vignette for contrast (dark steel gray, NOT black)
       const vg = g.createRadialGradient(w*0.5, h*0.5, h*0.12, w*0.5, h*0.5, h*0.82);
       vg.addColorStop(0, 'rgba(255,255,255,0.0)');
-      vg.addColorStop(1, 'rgba(88,94,103,0.28)');
+      vg.addColorStop(1, 'rgba(88,94,103,0.18)');
       g.fillStyle = vg;
       g.fillRect(0, 0, w, h);
 
@@ -3654,14 +4169,14 @@ AFRAME.registerComponent('mercury-ibl-silver', {
 
     // Faces: +X, -X, +Y, -Y, +Z, -Z
     // Darker silver base with a bright band for crisp specular highlights (no black).
-    const side = [[0.0,'#58606b'],[0.40,'#2a3038'],[0.50,'#f7f8fa'],[0.72,'#343b45'],[1.0,'#4b535e']];
+    const side = [[0.0,'#707784'],[0.40,'#3c434d'],[0.50,'#ffffff'],[0.72,'#464e59'],[1.0,'#5f6773']];
     const px = makeFace(size, size, side);
     const nx = makeFace(size, size, side);
     const pz = makeFace(size, size, side);
     const nz = makeFace(size, size, side);
 
-    const py = makeFace(size, size, [[0.0,'#f8fafc'],[0.30,'#d6dbe2'],[0.58,'#a5adb8'],[1.0,'#3a424d']]);
-    const ny = makeFace(size, size, [[0.0,'#3a424d'],[0.55,'#232a33'],[1.0,'#3a424d']]);
+    const py = makeFace(size, size, [[0.0,'#fbfcfe'],[0.30,'#e1e6ee'],[0.58,'#b3bcc8'],[1.0,'#4a5360']]);
+    const ny = makeFace(size, size, [[0.0,'#4a5360'],[0.55,'#2b333d'],[1.0,'#4a5360']]);
 
     const cubeTex = new THREE.CubeTexture([px, nx, py, ny, pz, nz]);
     cubeTex.needsUpdate = true;
@@ -3849,6 +4364,12 @@ AFRAME.registerComponent('mercury-page-look', {
             // Ambient slow swell (very subtle, keeps the surface alive)
             h += 0.006 * sin(uv.x*5.6 + uTime*0.045);
 
+            // Edge damping so ripples feel bounded by the basin interior
+            vec2 dd = uv - 0.5;
+            float r = length(dd);
+            float edgeFade = 1.0 - smoothstep(0.460, 0.495, r);
+            h *= edgeFade;
+
             return h;
           }
 
@@ -3859,8 +4380,8 @@ AFRAME.registerComponent('mercury-page-look', {
             float hX = heightField(uv + vec2(px.x, 0.0));
             float hY = heightField(uv + vec2(0.0, px.y));
 
-            float sx = (hX - hC) * 3.2;
-            float sy = (hY - hC) * 3.2;
+            float sx = (hX - hC) * 6.5;
+            float sy = (hY - hC) * 6.5;
 
             return normalize(vec3(-sx, -sy, 1.0));
           }
@@ -3875,7 +4396,7 @@ AFRAME.registerComponent('mercury-page-look', {
             if(disc <= 0.0) discard;
 
             // Base "black mercury" with a faint cool tint
-            vec3 base = vec3(0.010, 0.011, 0.013);
+            vec3 base = vec3(0.0065, 0.0072, 0.0086);
 
             // Vignette
             float vig = smoothstep(0.52, 0.18, r);
@@ -3893,28 +4414,28 @@ AFRAME.registerComponent('mercury-page-look', {
 
             // Specular with Fresnel (slick)
             vec3 h1 = normalize(l1 + v);
-            float spec1 = pow(max(dot(n, h1), 0.0), 92.0) * 1.15;
+            float spec1 = pow(max(dot(n, h1), 0.0), 92.0) * 1.10;
 
             vec3 h2 = normalize(l2 + v);
-            float spec2 = pow(max(dot(n, h2), 0.0), 72.0) * 0.55;
+            float spec2 = pow(max(dot(n, h2), 0.0), 72.0) * 0.62;
 
             float fres = pow(1.0 - max(dot(n, v), 0.0), 2.6);
 
             // "Reflection" gradient (no env map, but feels reflective)
             float refl = smoothstep(-0.2, 0.9, n.y*0.6 + 0.35);
-            vec3 reflection = vec3(0.040, 0.042, 0.045) + refl*vec3(0.060, 0.065, 0.070);
+            vec3 reflection = vec3(0.040, 0.042, 0.045) + refl*vec3(0.070, 0.076, 0.084);
 
             vec3 col = base;
-            col += reflection * (1.25 * fres);
+            col += reflection * (1.18 * fres);
             col += vec3(0.020, 0.021, 0.022) * (0.26*ndl1 + 0.14*ndl2);
-            col += vec3(0.160, 0.165, 0.170) * (spec1 + spec2);
+            col += vec3(0.200, 0.206, 0.214) * (spec1 + spec2);
 
             // Tiny cinematic grain
             float g = hash21(uv * (uRes.xy * 0.9) + uTime*0.0375) - 0.5;
             col += g * 0.009;
 
             // Gentle filmic curve
-            col = 1.0 - exp(-col * 1.55);
+            col = 1.0 - exp(-col * 1.28);
             col = clamp(col, 0.0, 1.0);
 
             gl_FragColor = vec4(col, 1.0);
@@ -3951,13 +4472,18 @@ AFRAME.registerComponent('mercury-page-look', {
   tick: function (t, dt) {
     if (!this._mat) return;
 
-    const time = (t || 0) / 1000.0;
+    const time = ((t || 0) / 1000.0) * 0.5;
     this._mat.uniforms.uTime.value = time;
 
     const sceneEl = this.el.sceneEl;
     const renderer = sceneEl && sceneEl.renderer;
     if (renderer) {
-      const size = renderer.getSize(new THREE.Vector2());
+      const size = new THREE.Vector2();
+      if (renderer.getDrawingBufferSize) {
+        renderer.getDrawingBufferSize(size);
+      } else {
+        renderer.getSize(size);
+      }
       this._mat.uniforms.uRes.value.set(Math.max(1, size.x), Math.max(1, size.y));
     }
 
@@ -10795,7 +11321,7 @@ AFRAME.registerComponent('merge-align', {
         return;
       }
 
-      // Assumption: imported root is a direct child of <a-scene prune-colliders renderer="antialias: false; precision: mediump; colorManagement: true; physicallyCorrectLights: false; powerPreference: high-performance;">.
+      // Assumption: imported root is a direct child of <a-scene prune-colliders renderer="antialias: false; precision: mediump; colorManagement: true; physicallyCorrectLights: false; powerPreference: high-performance;" npc-matte-auto>.
       this.el.object3D.position.add(this._tmpD);
     }
   });
@@ -15042,8 +15568,369 @@ AFRAME.registerComponent('seam-grain-fringe', {
 })();
 </script>
 
+<script>
+/* -------------------------------------------------------------------------
+   ion-wind-field (NDE dome)
+   Beauty-first “ion wind” columns + charged dust.
+   Notes:
+   - Uses additive translucent shader curtains (multi-plane columns) for volumetric feel.
+   - Adds a dense but slow charged dust field inside the dome for “medium presence”.
+--------------------------------------------------------------------------- */
+AFRAME.registerComponent('ion-wind-field', {
+  schema: {
+    columns:    {type: 'int',    default: 33},
+    radius:     {type: 'number', default: 6.4},
+    height:     {type: 'number', default: 9.6},
+    columnWidth:{type:'number',  default: 1.25},
+    layers:     {type: 'int',    default: 6},   // planes per column
+    opacity:    {type: 'number', default: 0.56},
+    dustCount:  {type: 'int',    default: 2400},
+    dustRadius: {type: 'number', default: 8.8},
+    dustHeight: {type: 'number', default: 7.6},
+    seed:       {type: 'int',    default: 9102}
+  },
 
-  <a-scene adaptive-resolution prune-colliders="keepRoots: #industrial_elevator_1, #dome_tunnel_import, #collision_root, #end_chamber_06" tabindex="0" auto-focus simple-ibl="intensity: 0.35; color: #e4ebf4"
+  init: function () {
+    const THREE = AFRAME.THREE;
+    const root = this.el.object3D;
+    this._t0 = performance.now();
+    this._rng = this._mulberry32(this.data.seed >>> 0);
+
+    // ---------- Shader helpers (instanced) ----------
+    const vtx = `
+      attribute float aSeed;
+      attribute float aOpacity;
+      attribute float aRotY;
+      attribute vec3  aOffset;
+      attribute float aScaleY;
+
+      varying vec2 vUv;
+      varying float vY;
+      varying float vSeed;
+      varying float vOp;
+
+      uniform float uTime;
+      uniform float uSway;
+      uniform float uHeight;
+
+      vec3 rotY(vec3 p, float a){
+        float s = sin(a), c = cos(a);
+        return vec3(c*p.x + s*p.z, p.y, -s*p.x + c*p.z);
+      }
+
+      void main() {
+        vUv = uv;
+        vSeed = aSeed;
+        vOp = aOpacity;
+
+        vec3 p = position;
+
+        // per-instance height variance
+        p.y *= aScaleY;
+
+        // Soft sway (stronger near the top).
+        float yN = clamp(p.y / max(0.001, uHeight), 0.0, 1.0);
+        float sway = (sin((p.y*0.18) + uTime*0.55 + aSeed) + sin((p.y*0.07) - uTime*0.35 + aSeed*1.7)) * 0.5;
+        p.x += sway * uSway * smoothstep(0.0, 1.0, yN);
+        p.z += cos((p.y*0.11) + uTime*0.42 + aSeed) * (uSway*0.75) * smoothstep(0.0, 1.0, yN);
+
+        vY = p.y;
+
+        // Rotate instance and translate to its world position
+        p = rotY(p, aRotY);
+        p += aOffset;
+
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+      }
+    `;
+
+    // Lightweight hash / noise (no textures).
+    const frag = `
+      precision highp float;
+      varying vec2 vUv;
+      varying float vY;
+      varying float vSeed;
+      varying float vOp;
+
+      uniform float uTime;
+      uniform vec3  uTint;
+
+      float hash12(vec2 p) {
+        vec3 p3  = fract(vec3(p.xyx) * 0.1031);
+        p3 += dot(p3, p3.yzx + 33.33);
+        return fract((p3.x + p3.y) * p3.z);
+      }
+
+      float noise(vec2 p) {
+        vec2 i = floor(p);
+        vec2 f = fract(p);
+        float a = hash12(i);
+        float b = hash12(i + vec2(1.0, 0.0));
+        float c = hash12(i + vec2(0.0, 1.0));
+        float d = hash12(i + vec2(1.0, 1.0));
+        vec2 u = f*f*(3.0-2.0*f);
+        return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+      }
+
+      float fbm(vec2 p) {
+        float v = 0.0;
+        float a = 0.55;
+        mat2 m = mat2(1.6, 1.2, -1.2, 1.6);
+        for(int i=0;i<4;i++){
+          v += a * noise(p);
+          p = m * p;
+          a *= 0.55;
+        }
+        return v;
+      }
+
+      void main() {
+        float t = uTime;
+
+        // UV helpers
+        float x = vUv.x;
+        float y = vUv.y;
+
+        // Vertical streaks (thin, layered)
+        float n1 = fbm(vec2(x*10.0 + vSeed*1.7, y*2.8 - t*0.12));
+        float stri = smoothstep(0.58, 0.98, n1);
+        stri = pow(stri, 2.0);
+
+        // Internal filaments (thin bright lines)
+        float fil = fbm(vec2(x*18.0 + n1*2.0, y*6.0 - t*0.22) + vSeed*2.1);
+        fil = pow(smoothstep(0.52, 0.92, fil), 2.0);
+
+        // Coherence knots (rare)
+        float knot = fbm(vec2(x*3.2 - t*0.05, y*3.2 + t*0.05) + vSeed*3.3);
+        knot = pow(smoothstep(0.78, 0.98, knot), 3.0);
+
+        // Edge feather (avoid hard rectangle)
+        float edge = smoothstep(0.0, 0.18, x) * smoothstep(0.0, 0.18, 1.0-x);
+
+        // Floor fade + top fade
+        float floorFade = smoothstep(0.03, 0.16, y);
+        float topFade   = smoothstep(1.0, 0.70, y);
+
+        float a = (0.55*stri + 0.30*fil + 0.55*knot) * edge * floorFade * topFade;
+
+        // Subtle “spark mist” inside the column (not glittery)
+        float mist = fbm(vec2(x*9.0, y*9.0 + t*0.18) + vSeed*0.7);
+        mist = smoothstep(0.62, 0.95, mist) * 0.18;
+
+        a = clamp(a + mist, 0.0, 1.0);
+
+        // Soft intensity curve + per-instance opacity
+        a = pow(a, 1.25) * vOp;
+
+        gl_FragColor = vec4(uTint, a);
+      }
+    `;
+
+    // Shared material for ALL layers/columns (single uniform update => subtle motion works).
+    const mat = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime:   {value: 0},
+        uSway:   {value: 0.22},
+        uHeight: {value: Math.max(0.001, this.data.height)},
+        uTint:   {value: new THREE.Color(0.92, 0.96, 1.0)}
+      },
+      vertexShader: vtx,
+      fragmentShader: frag,
+      transparent: true,
+      depthWrite: false,
+      depthTest: true,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide
+    });
+    this._mat = mat;
+
+    // ---------- Build columns (GPU instanced) ----------
+    const cols = Math.max(6, this.data.columns|0);
+    const layers = Math.max(2, this.data.layers|0);
+    const R = this.data.radius;
+    const H = this.data.height;
+    const W = this.data.columnWidth;
+
+    const geo = new THREE.PlaneGeometry(W, H, 12, 48);
+    geo.translate(0, H*0.5, 0);
+
+    const instanceCount = cols * layers;
+    const inst = new THREE.InstancedMesh(geo, mat, instanceCount);
+    inst.frustumCulled = true;
+
+    // Instanced attributes
+    const aSeed = new Float32Array(instanceCount);
+    const aOpacity = new Float32Array(instanceCount);
+    const aRotY = new Float32Array(instanceCount);
+    const aOffset = new Float32Array(instanceCount * 3);
+    const aScaleY = new Float32Array(instanceCount);
+
+    // Even distribution: fast min-distance dart throwing inside a disc (Poisson-ish).
+    const minDist = Math.max(0.95, W * 0.90);
+    const minD2 = minDist * minDist;
+    const pts = [];
+    const rnd = this._rng;
+
+    const pick = () => {
+      const a = rnd() * Math.PI * 2.0;
+      const rr = Math.sqrt(rnd()) * R;
+      return {x: Math.cos(a) * rr, z: Math.sin(a) * rr};
+    };
+
+    const maxTries = cols * 140;
+    let tries = 0;
+    while (pts.length < cols && tries < maxTries) {
+      tries++;
+      const p = pick();
+      let ok = true;
+      for (let i = 0; i < pts.length; i++) {
+        const dx = p.x - pts[i].x;
+        const dz = p.z - pts[i].z;
+        if (dx*dx + dz*dz < minD2) { ok = false; break; }
+      }
+      if (ok) pts.push(p);
+    }
+    while (pts.length < cols) pts.push(pick());
+
+    // Keep instanceMatrix identity; transforms are done in shader via attributes.
+    const ident = new THREE.Matrix4();
+    for (let i = 0; i < instanceCount; i++) inst.setMatrixAt(i, ident);
+
+    let idx = 0;
+    for (let i = 0; i < cols; i++) {
+      const base = pts[i];
+      const baseYaw = rnd() * Math.PI * 2.0;
+
+      for (let k = 0; k < layers; k++) {
+        const ry = baseYaw + (k / layers) * Math.PI + (rnd() - 0.5) * 0.35;
+        aRotY[idx] = ry;
+
+        const ox = base.x + (rnd() - 0.5) * 0.22;
+        const oz = base.z + (rnd() - 0.5) * 0.22;
+        aOffset[idx*3+0] = ox;
+        aOffset[idx*3+1] = 0.0;
+        aOffset[idx*3+2] = oz;
+
+        aSeed[idx] = rnd() * 100.0;
+
+        const op = this.data.opacity * (0.85 + rnd()*0.55) / Math.sqrt(layers);
+        aOpacity[idx] = op;
+
+        aScaleY[idx] = 0.92 + rnd() * 0.20;
+
+        idx++;
+      }
+    }
+
+    inst.geometry.setAttribute('aSeed', new THREE.InstancedBufferAttribute(aSeed, 1));
+    inst.geometry.setAttribute('aOpacity', new THREE.InstancedBufferAttribute(aOpacity, 1));
+    inst.geometry.setAttribute('aRotY', new THREE.InstancedBufferAttribute(aRotY, 1));
+    inst.geometry.setAttribute('aOffset', new THREE.InstancedBufferAttribute(aOffset, 3));
+    inst.geometry.setAttribute('aScaleY', new THREE.InstancedBufferAttribute(aScaleY, 1));
+
+    this._inst = inst;
+    root.add(inst);
+
+    // ---------- Charged dust (Points) ----------
+    const dustN = Math.max(600, this.data.dustCount|0);
+    const dGeo = new THREE.BufferGeometry();
+    const pos = new Float32Array(dustN*3);
+
+    for (let i=0;i<dustN;i++){
+      const rr = this.data.dustRadius * Math.sqrt(rnd());
+      const aa = rnd()*Math.PI*2.0;
+      const y  = rnd()*this.data.dustHeight + 0.30;
+      pos[i*3+0] = Math.cos(aa)*rr;
+      pos[i*3+1] = y;
+      pos[i*3+2] = Math.sin(aa)*rr;
+    }
+    dGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+
+    // Subtle dust shimmer, very cheap (no per-point CPU updates).
+    const dustMat = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: {value: 0},
+        uOpacity: {value: 0.16},
+        uSize: {value: 0.010}
+      },
+      vertexShader: `
+        uniform float uTime;
+        uniform float uSize;
+        varying float vA;
+        void main() {
+          vec3 p = position;
+
+          // Gentle volumetric drift (adds life without CPU updates).
+          float dx = 0.06 * sin(uTime*0.12 + position.y*0.27 + position.x*0.09);
+          float dz = 0.06 * cos(uTime*0.10 + position.y*0.21 + position.z*0.11);
+          p.x += dx;
+          p.z += dz;
+
+          // Vertical bob + shimmer.
+          p.y += 0.03 * sin(uTime*0.35 + position.x*0.35 + position.z*0.22);
+          vA = 0.65 + 0.35 * sin(uTime*0.55 + position.x*0.18 + position.y*0.21);
+
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+          gl_PointSize = uSize * (300.0 / -gl_Position.z);
+        }
+      `,
+      fragmentShader: `
+        precision highp float;
+        uniform float uOpacity;
+        varying float vA;
+        void main() {
+          vec2 uv = gl_PointCoord - 0.5;
+          float d = dot(uv, uv);
+          float a = smoothstep(0.25, 0.0, d);
+          gl_FragColor = vec4(1.0, 1.0, 1.0, a * uOpacity * vA);
+        }
+      `,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    });
+    this._dustMat = dustMat;
+
+    const dust = new THREE.Points(dGeo, dustMat);
+    dust.frustumCulled = false;
+    this._dust = dust;
+    root.add(dust);
+  },
+
+  tick: function (t) {
+    const tt = (t - this._t0) * 0.001;
+    if (this._mat && this._mat.uniforms) this._mat.uniforms.uTime.value = tt;
+    if (this._dustMat && this._dustMat.uniforms) this._dustMat.uniforms.uTime.value = tt;
+
+    // Very slow swirl to keep the dust from feeling "pinned".
+    if (this._dust) this._dust.rotation.y = tt * 0.03;
+  },
+
+  remove: function () {
+    const root = this.el.object3D;
+    if (this._inst) root.remove(this._inst);
+    if (this._dust) root.remove(this._dust);
+
+    try { if (this._inst && this._inst.geometry) this._inst.geometry.dispose(); } catch(e){}
+    try { if (this._mat) this._mat.dispose(); } catch(e){}
+    try { if (this._dust && this._dust.geometry) this._dust.geometry.dispose(); } catch(e){}
+    try { if (this._dustMat) this._dustMat.dispose(); } catch(e){}
+  },
+
+  _mulberry32: function(a) {
+    return function() {
+      let t = a += 0x6D2B79F5;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+});
+</script>
+
+
+
+  <a-scene adaptive-resolution npc-matte-auto="selector: .npc[gltf-model]; params: desat: 0.55; darken: 0.18; matte: 1.0" prune-colliders="keepRoots: #industrial_elevator_1, #dome_tunnel_import, #collision_root, #end_chamber_06" tabindex="0" auto-focus simple-ibl="intensity: 0.35; color: #e4ebf4"
            background="color: #020202"
            fog="type: exponential; color: #03060c; density: 0.027"
            renderer="antialias: false; colorManagement: true; physicallyCorrectLights: true; exposure: 1.25; highRefreshRate: false; powerPreference: high-performance;"
@@ -15081,6 +15968,26 @@ AFRAME.registerComponent('seam-grain-fringe', {
   <img id="torchGlowTex" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='256' height='256' viewBox='0 0 256 256'><defs><radialGradient id='g' cx='50%25' cy='50%25' r='60%25'><stop offset='0%25' stop-color='%23d9f1ff' stop-opacity='1'/><stop offset='28%25' stop-color='%23bfe6ff' stop-opacity='0.65'/><stop offset='55%25' stop-color='%238ad4ff' stop-opacity='0.22'/><stop offset='100%25' stop-color='%238ad4ff' stop-opacity='0'/></radialGradient></defs><rect width='256' height='256' fill='url(%23g)'/></svg>" />
   <img id="torchShaftTex" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='128' height='512' viewBox='0 0 128 512'><defs><linearGradient id='s' x1='0' y1='0' x2='0' y2='1'><stop offset='0%25' stop-color='%23d9f1ff' stop-opacity='0'/><stop offset='10%25' stop-color='%23d9f1ff' stop-opacity='0.12'/><stop offset='55%25' stop-color='%23bfe6ff' stop-opacity='0.08'/><stop offset='100%25' stop-color='%23bfe6ff' stop-opacity='0'/></linearGradient></defs><rect width='128' height='512' fill='url(%23s)'/></svg>" />
   <img id="torchSplashTex" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='512' height='256' viewBox='0 0 512 256'><defs><radialGradient id='p' cx='35%25' cy='55%25' r='70%25'><stop offset='0%25' stop-color='%23d9f1ff' stop-opacity='0.18'/><stop offset='35%25' stop-color='%23bfe6ff' stop-opacity='0.10'/><stop offset='75%25' stop-color='%238ad4ff' stop-opacity='0.04'/><stop offset='100%25' stop-color='%238ad4ff' stop-opacity='0'/></radialGradient></defs><rect width='512' height='256' fill='url(%23p)'/></svg>" />
+
+    <!-- ===== NPCs (sitting) ===== -->
+    <a-asset-item id="megan_sitting_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/megan_sitting.glb"></a-asset-item>
+    <a-asset-item id="liz_sitting_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/liz_sitting.glb"></a-asset-item>
+    <a-asset-item id="david_sitting_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/david_sitting.glb"></a-asset-item>
+    <a-asset-item id="adam_sitting_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/adam_sitting.glb"></a-asset-item>
+    <!-- ===== NPCs (idle) ===== -->
+    <a-asset-item id="sophie_idle_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/sophie_idle.glb"></a-asset-item>
+    <a-asset-item id="bryce_idle_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/bryce_idle.glb"></a-asset-item>
+    <a-asset-item id="jodie_idle_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/jodie_idle.glb"></a-asset-item>
+    <a-asset-item id="brian_idle_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/brian_idle.glb"></a-asset-item>
+    <a-asset-item id="alex_glb" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/characters/alex.glb"></a-asset-item>
+
+
+
+    <audio id="pool_sound" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/music/pool_sound.mp3"></audio>
+    <audio id="nde_sound" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/music/aya_sounds.mp3"></audio>
+
+    <audio id="sphere_sound" crossorigin="anonymous" src="https://raw.githubusercontent.com/epoliluisito/museum-models/main/aya_room/music/sphere_sounds.mp3"></audio>
+
 </a-assets>
 
 
@@ -15240,6 +16147,30 @@ AFRAME.registerComponent('seam-grain-fringe', {
   <a-entity id="block_rock_seat_03" proxy-box-collider="target: #rock_seat_03; pad: 0.12 0.06 0.12; minHeight: 0.55"></a-entity>
   <a-entity id="block_rock_seat_04" proxy-box-collider="target: #rock_seat_04; pad: 0.12 0.06 0.12; minHeight: 0.55"></a-entity>
 
+  <!-- ===== Colliders for NPCs + Sphere dome monoliths (added objects must be solid) ===== -->
+  <!-- NPCs (Aya dome) -->
+  <a-entity id="block_npc_megan_seat02"  proxy-box-collider="target: #npc_megan_seat02;  pad: 0.10 0.08 0.10; minHeight: 1.25"></a-entity>
+  <a-entity id="block_npc_liz_seat03_A" proxy-box-collider="target: #npc_liz_seat03_A; pad: 0.10 0.08 0.10; minHeight: 1.25"></a-entity>
+  <a-entity id="block_npc_david_seat03_B" proxy-box-collider="target: #npc_david_seat03_B; pad: 0.10 0.08 0.10; minHeight: 1.25"></a-entity>
+  <a-entity id="block_npc_adam_seat04"  proxy-box-collider="target: #npc_adam_seat04;  pad: 0.10 0.08 0.10; minHeight: 1.25"></a-entity>
+
+  <!-- NPCs (Sphere dome) -->
+  <a-entity id="block_npc_brian_sphere" proxy-box-collider="target: #npc_brian_sphere; pad: 0.12 0.10 0.12; minHeight: 1.55"></a-entity>
+  <a-entity id="block_npc_alex_sphere"  proxy-box-collider="target: #npc_alex_sphere;  pad: 0.12 0.10 0.12; minHeight: 1.55"></a-entity>
+
+  <!-- NPCs (NDE dome) -->
+  <a-entity id="block_npc_sophie_nde" proxy-box-collider="target: #npc_sophie_nde; pad: 0.12 0.10 0.12; minHeight: 1.55"></a-entity>
+  <a-entity id="block_npc_bryce_nde"  proxy-box-collider="target: #npc_bryce_nde;  pad: 0.12 0.10 0.12; minHeight: 1.55"></a-entity>
+  <a-entity id="block_npc_jodie_nde"  proxy-box-collider="target: #npc_jodie_nde;  pad: 0.12 0.10 0.12; minHeight: 1.55"></a-entity>
+
+  <!-- Sphere dome monoliths (6) -->
+  <a-entity id="block_video_monolith_01" proxy-box-collider="target: #video_monolith_01; pad: 0.03 0.08 0.03; minHeight: 2.05"></a-entity>
+  <a-entity id="block_video_monolith_02" proxy-box-collider="target: #video_monolith_02; pad: 0.03 0.08 0.03; minHeight: 2.05"></a-entity>
+  <a-entity id="block_video_monolith_03" proxy-box-collider="target: #video_monolith_03; pad: 0.03 0.08 0.03; minHeight: 2.05"></a-entity>
+  <a-entity id="block_video_monolith_04" proxy-box-collider="target: #video_monolith_04; pad: 0.03 0.08 0.03; minHeight: 2.05"></a-entity>
+  <a-entity id="block_video_monolith_05" proxy-box-collider="target: #video_monolith_05; pad: 0.03 0.08 0.03; minHeight: 2.05"></a-entity>
+  <a-entity id="block_video_monolith_06" proxy-box-collider="target: #video_monolith_06; pad: 0.03 0.08 0.03; minHeight: 2.05"></a-entity>
+
   <!-- ===== PROXY COLLIDERS: torches (all) ===== -->
   <a-entity id="block_torch_tunnel02_L1" proxy-box-collider="target: #torch_tunnel02_L1; pad: 0.08 0.12 0.08; minHeight: 1.40"></a-entity>
   <a-entity id="block_torch_tunnel02_L2" proxy-box-collider="target: #torch_tunnel02_L2; pad: 0.08 0.12 0.08; minHeight: 1.40"></a-entity>
@@ -15270,7 +16201,14 @@ AFRAME.registerComponent('seam-grain-fringe', {
 
 <!-- ===== Mercury Cavern Dome (new) ===== -->
 <a-entity id="aya_dome" position="1.72 0 0">
-  <!-- Large walkable ground patch -->
+  
+
+<!-- Aya Dome ambience (spatial, fades out by 40m) -->
+<a-entity id="aya_dome_ambience"
+          position="0 1.60 38.70"
+          sound="src: #pool_sound; autoplay: true; loop: true; positional: true; volume: 1; distanceModel: linear; refDistance: 1; maxDistance: 40; rolloffFactor: 1"
+          aya-dome-audio="maxDistance: 40"></a-entity>
+<!-- Large walkable ground patch -->
   <a-ring id="mercury_ground" visible="false"
       radius-inner="4.78" radius-outer="17.0" segments-theta="360" segments-phi="220"
       rotation="-90 0 0"
@@ -15352,6 +16290,46 @@ AFRAME.registerComponent('seam-grain-fringe', {
           material="shader: standard; color: #1a1a1a; roughness: 0.90; metalness: 0.0; envMapIntensity: 0.12"
           shadow="cast:false; receive:true"></a-entity>
 
+    <!-- ===== NPCs (seated, facing the mercury pool) ===== -->
+    <!-- Pool center (local to #aya_dome) is approx: 0 0 38.7 -->
+    <a-entity id="npc_megan_seat02"
+              class="nocollider npc"
+              gltf-model="#megan_sitting_glb"
+              autoplay-gltf-anim
+              position="5.22 -0.005 41.95"
+              rotation="
+              0 244.1 0"
+              scale="1 1 1"></a-entity>
+
+    <!-- Two NPCs on rock_seat_03 (slight lateral offsets to avoid overlap) -->
+    <a-entity id="npc_liz_seat03_A"
+              class="nocollider npc"
+              gltf-model="#liz_sitting_glb"
+              autoplay-gltf-anim
+              position="-2.58 -0.005 43.95"
+              rotation="
+              0 158.0 0"
+              scale="1 1 1"></a-entity>
+
+    <a-entity id="npc_david_seat03_B"
+              class="nocollider npc"
+              gltf-model="#david_sitting_glb"
+              autoplay-gltf-anim
+              position="-1.72 -0.005 44.15"
+              rotation="
+              0 158.0 0"
+              scale="1 1 1"></a-entity>
+
+    <a-entity id="npc_adam_seat04"
+              class="nocollider npc"
+              gltf-model="#adam_sitting_glb"
+              autoplay-gltf-anim
+              position="-5.89 -0.005 36.94"
+              rotation="
+              0 73.4 0"
+              scale="1 1 1"></a-entity>
+
+
 
   <a-entity id="mercury_pool_rubble_clusters"
             seam-rubble-skirt="domeCenter: 0 3.35 38.7; domeA: 5.85; domeB: 5.85; y: 0.020; count: 9; heroCount: 2; bandWidth: 0.60; seed: 107; tangentJitter: 0.22; yJitter: 0.020; scaleMin: 0.045; scaleMax: 0.13; heroScaleMin: 0.18; heroScaleMax: 0.32; color1: #1b1b1b; color2: #2c2c2c; roughness: 0.92; metalness: 0.0" freeze-static-mesh></a-entity>
@@ -15409,11 +16387,11 @@ AFRAME.registerComponent('seam-grain-fringe', {
     <a-cylinder id="mercury_basin_rim" visible="false" rock-surface="seed: 101; color: #2a2a2a; roughness: 0.96; metalness: 0.0; repeat: 3.6 1.8; normalScale: 0.28 0.28"
                 radius="4.70" height="0.62" openEnded="true"
                 position="0 -0.31 38.7"
-                shadow="cast:false; receive:true" uv2-from-uv freeze-static-mesh></a-cylinder>
+                shadow="cast:false; receive:true" uv2-from-uv freeze-static-mesh segments-radial="128"></a-cylinder>
 
     <!-- Inner rock shaft: a real basin wall going down (so the pool is not a sheet) -->
     <a-entity id="mercury_basin_cavity_wall"
-              geometry="primitive: cylinder; radius: 4.26; height: 20.0; openEnded: true; segmentsRadial: 48; segmentsHeight: 120"
+              geometry="primitive: cylinder; radius: 4.26; height: 20.0; openEnded: true; segmentsRadial: 128; segmentsHeight: 120"
               position="0 -10.0 38.7"
               material="shader: standard; color:#f1f1f1; src:#moonDiffuse; normalMap:#moonNormal; roughnessMap:#moonRough; aoMap:#moonAO; metalness:0; roughness:1; repeat: 8 5; normalScale: 0.95 -0.95; side: back"
               cave-displace="amp: 0.18; freq: 2.10; macroFreq: 0.36; macroAmp: 0.30; seed: 241; oct: 3; lac: 2.1; gain: 0.55"
@@ -15424,18 +16402,18 @@ AFRAME.registerComponent('seam-grain-fringe', {
               radius="4.24"
               position="0 -6.55 38.7" rotation="-90 0 0"
               material="shader: standard; color:#0b0c0e; roughness:1; metalness:0; side: double"
-              shadow="cast:false; receive:false" freeze-static-mesh></a-circle>
+              shadow="cast:false; receive:false" freeze-static-mesh segments="256"></a-circle>
 
     <!-- Opaque mercury body: a filled volume under the animated surface (so you never see ground) -->
     <a-entity id="mercury_liquid_volume" render-order="value: 0" visible="false"
-              geometry="primitive: cylinder; radius: 4.00; height: 68.0; openEnded: true; segmentsRadial: 48; segmentsHeight: 24"
+              geometry="primitive: cylinder; radius: 4.00; height: 68.0; openEnded: true; segmentsRadial: 128; segmentsHeight: 24"
               position="0 -34.2 38.7"
               material="shader: standard; color: #323842; metalness: 1.0; roughness: 0.070; emissive: #000000; emissiveIntensity: 0; side: back; transparent: false; opacity: 1; depthWrite: true" mercury-ibl-silver="intensity: 1"
               shadow="cast:false; receive:false"></a-entity>
 
     <!-- Inner core (prevents any 'hollow pipe' read if the camera catches the inside at grazing angles) -->
     <a-entity id="mercury_liquid_core" render-order="value: 0" visible="false"
-              geometry="primitive: cylinder; radius: 3.92; height: 67.6; openEnded: true; segmentsRadial: 48; segmentsHeight: 16"
+              geometry="primitive: cylinder; radius: 3.92; height: 67.6; openEnded: true; segmentsRadial: 128; segmentsHeight: 16"
               position="0 -34.2 38.7"
               material="shader: standard; color: #2a2f37; metalness: 1.0; roughness: 0.120; emissive: #000000; emissiveIntensity: 0; side: back; depthWrite: true"
               shadow="cast:false; receive:false" mercury-ibl-silver="intensity: 1"></a-entity>
@@ -15443,7 +16421,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
               radius="4.05"
               position="0 -68.0 38.7" rotation="-90 0 0"
               material="shader: standard; color: #272c34; metalness: 1.0; roughness: 0.140; emissive: #000000; emissiveIntensity: 0; side: double"
-              shadow="cast:false; receive:false" mercury-ibl-silver="intensity: 1"></a-circle>
+              shadow="cast:false; receive:false" mercury-ibl-silver="intensity: 1" segments="256"></a-circle>
 
     <!-- Shore ring -->
     <a-entity id="mercury_basin_shore"
@@ -15468,99 +16446,17 @@ AFRAME.registerComponent('seam-grain-fringe', {
     <!-- Pool glow + light rig (replaces the sphere core illumination; optimized for Safari) -->
     <a-entity id="mercury_pool_light_rig" position="0 0.55 38.7">
       <!-- Pool-emitted light (distributed, no single hotspot). Localized so tunnel/entrance stay dark. -->
-      <a-entity position="0 2.10 0" light="type: point; color: #cfe9ff; intensity: 0.85; distance: 15; decay: 2; castShadow: false"></a-entity>
-      <a-entity position="2.20 1.60 0" light="type: point; color: #cfe9ff; intensity: 0.55; distance: 12; decay: 2; castShadow: false"></a-entity>
-      <a-entity position="-2.20 1.60 0" light="type: point; color: #cfe9ff; intensity: 0.55; distance: 12; decay: 2; castShadow: false"></a-entity>
-      <a-entity position="0 1.60 2.20" light="type: point; color: #cfe9ff; intensity: 0.55; distance: 12; decay: 2; castShadow: false"></a-entity>
-      <a-entity position="0 1.60 -2.20" light="type: point; color: #cfe9ff; intensity: 0.55; distance: 12; decay: 2; castShadow: false"></a-entity>
+      <a-entity position="0 2.10 0" light="type: point; color: #cfe9ff; intensity: 1.65; distance: 18; decay: 2; castShadow: false" animation__int="property: light.intensity; dir: alternate; dur: 5200; easing: easeInOutSine; loop: true; to: 2.10" animation__pos="property: position; dir: alternate; dur: 6500; easing: easeInOutSine; loop: true; to: 0.12 2.25 0.10"></a-entity>
+      <a-entity position="2.20 1.60 0" light="type: point; color: #cfe9ff; intensity: 1.15; distance: 15; decay: 2; castShadow: false" animation__int="property: light.intensity; dir: alternate; dur: 4300; easing: easeInOutSine; loop: true; delay: 700; to: 1.55" animation__pos="property: position; dir: alternate; dur: 5900; easing: easeInOutSine; loop: true; delay: 300; to: 2.35 1.72 0.18"></a-entity>
+      <a-entity position="-2.20 1.60 0" light="type: point; color: #cfe9ff; intensity: 1.15; distance: 15; decay: 2; castShadow: false" animation__int="property: light.intensity; dir: alternate; dur: 4700; easing: easeInOutSine; loop: true; delay: 1100; to: 1.45" animation__pos="property: position; dir: alternate; dur: 6100; easing: easeInOutSine; loop: true; delay: 500; to: -2.30 1.70 -0.16"></a-entity>
+      <a-entity position="0 1.60 2.20" light="type: point; color: #cfe9ff; intensity: 1.05; distance: 14; decay: 2; castShadow: false"></a-entity>
+      <a-entity position="0 1.60 -2.20" light="type: point; color: #cfe9ff; intensity: 1.05; distance: 14; decay: 2; castShadow: false"></a-entity>
       <!-- Very soft overhead fill so the dome does not read as one-sided-lit -->
-      <a-entity position="0 4.90 0" light="type: point; color: #d9f1ff; intensity: 0.28; distance: 36; decay: 2; castShadow: false"></a-entity>
+      <a-entity position="0 4.90 0" light="type: point; color: #d9f1ff; intensity: 0.32; distance: 40; decay: 2; castShadow: false"></a-entity>
     </a-entity>
-    <!-- ===== Forest-of-Lights ring (7 cones) =====
-         Concept: a sparse outer ring of narrow light cones around the rock seats.
-         Performance: no shadows; 7 small spotlights + 7 additive cone meshes. -->
-        <!-- ===== Forest-of-Lights ring (7 cones) =====
-         Concept: a sparse outer ring of narrow light cones around the rock seats.
-         Performance: no shadows; 7 small spotlights + 7 additive cone meshes. -->
-    <a-entity id="forest_of_lights_ring" position="0 0 0">
-      <!-- Cone 01 (0.00°) -->
-      <a-entity id="fol_01" fol-cone-anim="seed: 1" position="7.30 0 42.21">
-        <a-entity position="0 5.40 0" rotation="-90 0 0" light="type: spot; color: #cfe9ff; intensity: 2.55; angle: 2.7; penumbra: 0.6; distance: 36; decay: 2; castShadow: false"></a-entity>
-        <a-circle class="fol_lamp" radius="0.045" position="0 5.40 0" rotation="-90 0 0"
-                  material="shader: standard; color: #000000; emissive: #d9f1ff; emissiveIntensity: 56.0; metalness: 0.0; roughness: 1.0; transparent: true; opacity: 1; side: double; fog: true"
-                  shadow="cast:false; receive:false"></a-circle>
-        <a-entity fol-beam="height: 7.0; radiusTop: 0.04; radiusBottom: 0.28; color: #bfe8ff; opacity: 0.34"
-                  position="0 1.90 0"
-                  shadow="cast:false; receive:false"></a-entity>
-      </a-entity>
+    
+    <!-- Forest-of-Lights ring removed (per request) -->
 
-      <!-- Cone 02 (51.43°) -->
-      <a-entity id="fol_02" fol-cone-anim="seed: 2" position="1.80 0 46.59">
-        <a-entity position="0 5.40 0" rotation="-90 0 0" light="type: spot; color: #cfe9ff; intensity: 2.55; angle: 2.7; penumbra: 0.6; distance: 36; decay: 2; castShadow: false"></a-entity>
-        <a-circle class="fol_lamp" radius="0.045" position="0 5.40 0" rotation="-90 0 0"
-                  material="shader: standard; color: #000000; emissive: #d9f1ff; emissiveIntensity: 56.0; metalness: 0.0; roughness: 1.0; transparent: true; opacity: 1; side: double; fog: true"
-                  shadow="cast:false; receive:false"></a-circle>
-        <a-entity fol-beam="height: 7.0; radiusTop: 0.04; radiusBottom: 0.28; color: #bfe8ff; opacity: 0.34"
-                  position="0 1.90 0"
-                  shadow="cast:false; receive:false"></a-entity>
-      </a-entity>
-
-      <!-- Cone 03 (102.86°) -->
-      <a-entity id="fol_03" fol-cone-anim="seed: 3" position="-5.05 0 45.04">
-        <a-entity position="0 5.40 0" rotation="-90 0 0" light="type: spot; color: #cfe9ff; intensity: 2.55; angle: 2.7; penumbra: 0.6; distance: 36; decay: 2; castShadow: false"></a-entity>
-        <a-circle class="fol_lamp" radius="0.045" position="0 5.40 0" rotation="-90 0 0"
-                  material="shader: standard; color: #000000; emissive: #d9f1ff; emissiveIntensity: 56.0; metalness: 0.0; roughness: 1.0; transparent: true; opacity: 1; side: double; fog: true"
-                  shadow="cast:false; receive:false"></a-circle>
-        <a-entity fol-beam="height: 7.0; radiusTop: 0.04; radiusBottom: 0.28; color: #bfe8ff; opacity: 0.34"
-                  position="0 1.90 0"
-                  shadow="cast:false; receive:false"></a-entity>
-      </a-entity>
-
-      <!-- Cone 04 (154.29°) -->
-      <a-entity id="fol_04" fol-cone-anim="seed: 4" position="-8.10 0 38.70">
-        <a-entity position="0 5.40 0" rotation="-90 0 0" light="type: spot; color: #cfe9ff; intensity: 2.55; angle: 2.7; penumbra: 0.6; distance: 36; decay: 2; castShadow: false"></a-entity>
-        <a-circle class="fol_lamp" radius="0.045" position="0 5.40 0" rotation="-90 0 0"
-                  material="shader: standard; color: #000000; emissive: #d9f1ff; emissiveIntensity: 56.0; metalness: 0.0; roughness: 1.0; transparent: true; opacity: 1; side: double; fog: true"
-                  shadow="cast:false; receive:false"></a-circle>
-        <a-entity fol-beam="height: 7.0; radiusTop: 0.04; radiusBottom: 0.28; color: #bfe8ff; opacity: 0.34"
-                  position="0 1.90 0"
-                  shadow="cast:false; receive:false"></a-entity>
-      </a-entity>
-
-      <!-- Cone 05 (205.71°) -->
-      <a-entity id="fol_05" fol-cone-anim="seed: 5" position="-5.05 0 32.37">
-        <a-entity position="0 5.40 0" rotation="-90 0 0" light="type: spot; color: #cfe9ff; intensity: 2.55; angle: 2.7; penumbra: 0.6; distance: 36; decay: 2; castShadow: false"></a-entity>
-        <a-circle class="fol_lamp" radius="0.045" position="0 5.40 0" rotation="-90 0 0"
-                  material="shader: standard; color: #000000; emissive: #d9f1ff; emissiveIntensity: 56.0; metalness: 0.0; roughness: 1.0; transparent: true; opacity: 1; side: double; fog: true"
-                  shadow="cast:false; receive:false"></a-circle>
-        <a-entity fol-beam="height: 7.0; radiusTop: 0.04; radiusBottom: 0.28; color: #bfe8ff; opacity: 0.34"
-                  position="0 1.90 0"
-                  shadow="cast:false; receive:false"></a-entity>
-      </a-entity>
-
-      <!-- Cone 06 (257.14°) -->
-      <a-entity id="fol_06" fol-cone-anim="seed: 6" position="1.81 0 30.80">
-        <a-entity position="0 5.40 0" rotation="-90 0 0" light="type: spot; color: #cfe9ff; intensity: 2.55; angle: 2.7; penumbra: 0.6; distance: 36; decay: 2; castShadow: false"></a-entity>
-        <a-circle class="fol_lamp" radius="0.045" position="0 5.40 0" rotation="-90 0 0"
-                  material="shader: standard; color: #000000; emissive: #d9f1ff; emissiveIntensity: 56.0; metalness: 0.0; roughness: 1.0; transparent: true; opacity: 1; side: double; fog: true"
-                  shadow="cast:false; receive:false"></a-circle>
-        <a-entity fol-beam="height: 7.0; radiusTop: 0.04; radiusBottom: 0.28; color: #bfe8ff; opacity: 0.34"
-                  position="0 1.90 0"
-                  shadow="cast:false; receive:false"></a-entity>
-      </a-entity>
-
-      <!-- Cone 07 (308.57°) -->
-      <a-entity id="fol_07" fol-cone-anim="seed: 7" position="7.30 0 35.19">
-        <a-entity position="0 5.40 0" rotation="-90 0 0" light="type: spot; color: #cfe9ff; intensity: 2.55; angle: 2.7; penumbra: 0.6; distance: 36; decay: 2; castShadow: false"></a-entity>
-        <a-circle class="fol_lamp" radius="0.045" position="0 5.40 0" rotation="-90 0 0"
-                  material="shader: standard; color: #000000; emissive: #d9f1ff; emissiveIntensity: 56.0; metalness: 0.0; roughness: 1.0; transparent: true; opacity: 1; side: double; fog: true"
-                  shadow="cast:false; receive:false"></a-circle>
-        <a-entity fol-beam="height: 7.0; radiusTop: 0.04; radiusBottom: 0.28; color: #bfe8ff; opacity: 0.34"
-                  position="0 1.90 0"
-                  shadow="cast:false; receive:false"></a-entity>
-      </a-entity>
-
-    </a-entity>
 
 
 <!-- Subtle visible glow so it feels like light is emanating from the pool (does not affect lighting) -->
@@ -15568,13 +16464,13 @@ AFRAME.registerComponent('seam-grain-fringe', {
               radius="4.10"
               position="0 0.050 38.7" rotation="-90 0 0"
               material="shader: flat; color: #d9f1ff; transparent: true; opacity: 0.018; side: double; depthWrite: false; depthTest: true; polygonOffset: true; polygonOffsetFactor: -3; polygonOffsetUnits: -3"
-              shadow="cast:false; receive:false" visible="false"></a-circle>
+              shadow="cast:false; receive:false" visible="false" segments="256"></a-circle>
     <!-- Emissive bloom disc (drives soft glow from pool without extra lights) -->
     <a-circle id="mercury_pool_emissive" render-order="value: 5"
               radius="4.18"
               position="0 0.049 38.7" rotation="-90 0 0"
-              material="shader: standard; color: #000000; emissive: #d9f1ff; emissiveIntensity: 4.5; metalness: 0.0; roughness: 1.0; transparent: true; opacity: 0.10; side: double; depthWrite: false; depthTest: true; polygonOffset: true; polygonOffsetFactor: -3; polygonOffsetUnits: -3"
-              shadow="cast:false; receive:false" visible="false"></a-circle>
+              material="shader: standard; color: #000000; emissive: #000000; emissiveIntensity: 0; metalness: 0.0; roughness: 1.0; transparent: true; opacity: 0.10; side: double; depthWrite: false; depthTest: true; polygonOffset: true; polygonOffsetFactor: -3; polygonOffsetUnits: -3"
+              shadow="cast:false; receive:false" visible="false" segments="256"></a-circle>
 
 <!-- Planar reflection overlay (dynamic reflection of the split sphere on the mercury surface) -->
     <a-entity id="mercury_surface_reflection" render-order="value: 6"
@@ -15596,7 +16492,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
           disc-clip="radius: 4.050"
           rotation="-90 0 0"
           position="0 -0.070 38.7"
-          material="shader: standard; color: #2f353e; metalness: 1.0; roughness: 0.085; transparent: true; opacity: 0.98; polygonOffset: true; polygonOffsetFactor: -1; polygonOffsetUnits: -1"
+          material="shader: standard; color: #4b525c; metalness: 1.0; roughness: 0.060; transparent: true; opacity: 0.98; polygonOffset: true; polygonOffsetFactor: -1; polygonOffsetUnits: -1; envMapIntensity: 1.25"
           shadow="cast:false; receive:false" mercury-ibl-silver="intensity: 0.9"></a-entity>
 
     <!-- Subsurface safety layer (always liquid beneath; prevents any accidental ground peek-through) -->
@@ -15604,7 +16500,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
               geometry="primitive: plane; width: 8.120; height: 8.120; segmentsWidth: 48; segmentsHeight: 48"
               rotation="-90 0 0"
               position="0 -0.160 38.7"
-              material="shader: standard; color: #272d35; metalness: 1.0; roughness: 0.14; envMapIntensity: 0.95; transparent: false; opacity: 1; side: double; depthWrite: true; depthTest: true"
+              material="shader: standard; color: #3a414b; metalness: 1.0; roughness: 0.110; envMapIntensity: 1.10; transparent: false; opacity: 1; side: double; depthWrite: true; depthTest: true"
               shadow="cast:false; receive:false" mercury-ibl-silver="intensity: 0.8"></a-entity>
 
 
@@ -15613,8 +16509,8 @@ AFRAME.registerComponent('seam-grain-fringe', {
     <a-circle id="mercury_static_circle" render-order="value: 0"
               radius="4.05"
               position="0 -0.260 38.7" rotation="-90 0 0"
-              material="shader: standard; color: #1c2028; metalness: 1.0; roughness: 0.115; envMapIntensity: 1.05; emissive: #000000; emissiveIntensity: 0; side: double; transparent: false; opacity: 1; depthWrite: true; depthTest: true; polygonOffset: true; polygonOffsetFactor: 1; polygonOffsetUnits: 1"
-              shadow="cast:false; receive:false" mercury-ibl-silver="intensity: 0.85"></a-circle>
+              material="shader: standard; color: #505864; metalness: 1.0; roughness: 0.065; envMapIntensity: 1.45; emissive: #000000; emissiveIntensity: 0; side: double; transparent: false; opacity: 1; depthWrite: true; depthTest: true; polygonOffset: true; polygonOffsetFactor: 1; polygonOffsetUnits: 1"
+              shadow="cast:false; receive:false" mercury-ibl-silver="intensity: 0.85" segments="256"></a-circle>
 </a-entity>
 
 <!-- Mercurial wall torches (replaced) -->
@@ -15985,6 +16881,33 @@ AFRAME.registerComponent('seam-grain-fringe', {
               shadow="cast:false; receive:true"
               uv2-from-uv freeze-static-mesh></a-entity>
 
+    <!-- Sphere Dome ambience (spatial, fades out by 40m) -->
+    <a-entity id="sphere_dome_ambience"
+              position="-9.40 0.10 0.00"
+              sound="src: #sphere_sound; autoplay: true; loop: true; positional: true; volume: 1; distanceModel: linear; refDistance: 1; maxDistance: 40; rolloffFactor: 1"
+              sphere-dome-audio="maxDistance: 40"></a-entity>
+
+
+    <!-- ===== NPCs (idle) — Sphere dome (outside monolith ring) ===== -->
+    <a-entity id="npc_brian_sphere"
+              class="nocollider npc"
+              gltf-model="#brian_idle_glb"
+              autoplay-gltf-anim
+              position="-2.95 0.150 0.00"
+              rotation="0 -90 0"
+              scale="1 1 1"
+              npc-ground></a-entity>
+
+    <a-entity id="npc_alex_sphere"
+              class="nocollider npc"
+              gltf-model="#alex_glb"
+              autoplay-gltf-anim
+              position="-15.00 0.000 0.00"
+              rotation="0 90 0"
+              scale="1 1 1"
+              npc-ground></a-entity>
+
+
     <!-- Sphere dome shell (same style as aya_dome_shell, slightly smaller) -->
     <a-entity id="sphere_dome_shell"
               position="-9.40 3.35 0"
@@ -16009,21 +16932,59 @@ AFRAME.registerComponent('seam-grain-fringe', {
                                 octaves: 4;
                                 lacunarity: 2.05;
                                 gain: 0.52"
-              cylindrical-clip-multi="targets: #sphere_dome_cutref, #tunnel_04_cutref; radius: 1.60; halfLength: 6.00" freeze-static-mesh></a-entity>
+              cylindrical-clip-multi="targets: #sphere_dome_cutref, #tunnel_04_cutref; radius: 1.60; halfLength: 6.00" freeze-static-mesh>
+</a-entity>
 
 
     <!-- === Soul Orb: milky volumetric presence core (no UI / random seed per load) === -->
     <a-sphere id="sphere_dome_soul_orb"
-              orbital-pointlights="radius: 2.5; height: 0.35; speed: 0.22; distance: 12.5; decay: 2.0; intensity: 1.15; count: 3"
+              orbital-pointlights="radius: 2.5; height: 0.35; speed: 0.22; distance: 12.5; decay: 2.0; intensity: 1.7; count: 3"
               position="-9.40 1.85 0.00"
               radius="1.25"
               material="shader: soulorb; transparent: false; opacity: 1.0; side: double; depthWrite: true"
               soulorb-seed
               animation__bob="property: position; dir: alternate; dur: 4200; easing: easeInOutSine; loop: true; from: -9.40 1.75 0.00; to: -9.40 2.05 0.00"
-              animation__slowspin="property: rotation; dur: 18000; easing: linear; loop: true; from: 0 0 0; to: 0 360 0">
+              animation__slowspin="property: rotation; dur: 18000; easing: linear; loop: true; from: 0 0 0; to: 0 360 0"
+              segments-width="128" segments-height="96">
     </a-sphere>
 
-    <!-- Sphere dome boundary colliders (prevent walking through the shell). Opening toward tunnel (+X). -->
+<!-- Video monolith ring (6) around the soul orb -->
+    <a-box id="video_monolith_01"
+           width="1.2" height="2.0" depth="0.27"
+           position="-4.810 1.000 2.650"
+           rotation="0 -120.0 0"
+           material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true; polygonOffsetFactor: -1; polygonOffsetUnits: -1"></a-box>
+
+    <a-box id="video_monolith_02"
+           width="1.2" height="2.0" depth="0.27"
+           position="-9.400 1.000 5.300"
+           rotation="0 -180.0 0"
+           material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true; polygonOffsetFactor: -1; polygonOffsetUnits: -1"></a-box>
+
+    <a-box id="video_monolith_03"
+           width="1.2" height="2.0" depth="0.27"
+           position="-13.990 1.000 2.650"
+           rotation="0 120.0 0"
+           material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true; polygonOffsetFactor: -1; polygonOffsetUnits: -1"></a-box>
+
+    <a-box id="video_monolith_04"
+           width="1.2" height="2.0" depth="0.27"
+           position="-13.990 1.000 -2.650"
+           rotation="0 60.0 0"
+           material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true; polygonOffsetFactor: -1; polygonOffsetUnits: -1"></a-box>
+
+    <a-box id="video_monolith_05"
+           width="1.2" height="2.0" depth="0.27"
+           position="-9.400 1.000 -5.300"
+           rotation="0 0.0 0"
+           material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true; polygonOffsetFactor: -1; polygonOffsetUnits: -1"></a-box>
+
+    <a-box id="video_monolith_06"
+           width="1.2" height="2.0" depth="0.27"
+           position="-4.810 1.000 -2.650"
+           rotation="0 -60.0 0"
+           material="shader: standard; src: #elevMetalColor; normalMap: #elevMetalNormal; roughnessMap: #elevMetalRough; metalnessMap: #elevMetalMetal; metalness: 1; roughness: 1; normalScale: 0.8 0.8; polygonOffset: true; polygonOffsetFactor: -1; polygonOffsetUnits: -1"></a-box>
+<!-- Sphere dome boundary colliders (prevent walking through the shell). Opening toward tunnel (+X). -->
 </a-entity>
 <!-- Minimal mouth dressing (inside the new dome) to soften the cut edge -->
     <a-entity id="sphere_dome_mouth_dressing" position="0 1.20 0" rotation="0 90 0" freeze-static-mesh>
@@ -16287,6 +17248,69 @@ AFRAME.registerComponent('seam-grain-fringe', {
                 shadow="cast:false; receive:true"
                 uv2-from-uv></a-entity>
 
+    
+<a-entity id="nde_dome_ambience"
+          position="-9.40 0.10 0.00"
+          sound="src: #nde_sound; autoplay: true; loop: true; positional: true; volume: 1; distanceModel: linear; refDistance: 1; maxDistance: 40; rolloffFactor: 1"
+          nde-dome-audio="maxDistance: 40"></a-entity>
+
+
+<!-- ===== NPCs (idle) — NDE dome ===== -->
+    <a-entity id="npc_sophie_nde"
+              class="nocollider npc"
+              gltf-model="#sophie_idle_glb"
+              autoplay-gltf-anim
+              position="-5.631 0.000 4.10"
+              rotation="0 -140 0"
+              scale="1 1 1"
+              npc-ground></a-entity>
+
+    <a-entity id="npc_bryce_nde"
+              class="nocollider npc"
+              gltf-model="#bryce_idle_glb"
+              autoplay-gltf-anim
+              position="-12.360 0.000 2.069"
+              rotation="0 45 0"
+              scale="1 1 1"
+              npc-ground></a-entity>
+
+    <a-entity id="npc_jodie_nde"
+              class="nocollider npc"
+              gltf-model="#jodie_idle_glb"
+              autoplay-gltf-anim
+              position="-9.40 0.000 -5.00"
+              rotation="0 0 0"
+              scale="1 1 1"
+              npc-ground></a-entity>
+
+
+
+      <!-- NDE moonlight rig: soft angled key + gentle local fill (no shadows, low CPU) -->
+      <a-entity id="nde_moonlight_rig" position="-9.40 0.00 0.00" rotation="0 92 0">
+        <!-- target to aim the moonlight at the ion-wind "forest" -->
+        <a-entity id="nde_moonlight_target" position="0 3.2 0" visible="false"></a-entity>
+
+        <!-- soft "moon" key: wide spot, angled, distance-limited so it mostly affects NDE -->
+        <a-entity id="nde_moonlight_key"
+                  position="3.8 15.5 7.6"
+                  rotation="-55 -32 0"
+                  light="type: spot; color: #b9c8ff; intensity: 0.9; distance: 60; decay: 1; angle: 85; penumbra: 1.0"
+                  animation="property: light.intensity; dir: alternate; dur: 9000; easing: easeInOutSine; loop: true; to: 1.10">
+        </a-entity>
+
+        <!-- subtle local fill to keep bases readable (still justified as bounce) -->
+        <a-entity id="nde_moonlight_fill"
+                  position="0 2.4 0"
+                  light="type: point; color: #c9d6ff; intensity: 0.07; distance: 35; decay: 1.5"
+                  animation="property: light.intensity; dir: alternate; dur: 12000; easing: easeInOutSine; loop: true; to: 0.08">
+        </a-entity>
+      </a-entity>
+
+      <!-- Ion wind field (beauty-first) -->
+      <a-entity id="nde_ion_wind" position="-9.40 0.00 0.00" rotation="0 92 0"
+                ion-wind-field="columns: 24; radius: 9.0; height: 9.8; columnWidth: 1.35; layers: 7; opacity: 0.28; dustCount: 4200; dustRadius: 10.5; dustHeight: 8.0; seed: 1337"></a-entity>
+
+
       <a-entity id="nde_dome_shell"
                 position="-9.40 3.35 0"
                 rotation="0 92 0"
@@ -16310,15 +17334,9 @@ AFRAME.registerComponent('seam-grain-fringe', {
                                   octaves: 4;
                                   lacunarity: 2.05;
                                   gain: 0.52"
-                cylindrical-clip-multi="targets: #nde_dome_cutref, #tunnel_05_cutref; radius: 1.60; halfLength: 6.00"></a-entity>
-      <!-- TEMP spotlight for visibility in nde_dome -->
-      <a-entity id="nde_dome_temp_spotlight_target" position="-9.40 0.75 0"></a-entity>
-      <a-entity id="nde_dome_temp_spotlight"
-                position="-9.40 7.20 0"
-                rotation="-90 0 0"
-                light="type: spot; color: #cfe9ff; intensity: 26; angle: 80; penumbra: 0.85; distance: 60; decay: 2; castShadow: false; target: #nde_dome_temp_spotlight_target"></a-entity>
-
-    </a-entity>
+                cylindrical-clip-multi="targets: #nde_dome_cutref, #tunnel_05_cutref; radius: 1.60; halfLength: 6.00">
+</a-entity>
+</a-entity>
 
   </a-entity>
 
@@ -16328,7 +17346,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
             rotation="0 180 0"
             merge-align="from: #tunnel_01_rim_far; to: #merge_portal_anchor; positionOnly: true">
 <!-- Minimal lighting so you can see the elevator -->
-    <a-entity light="type: hemisphere; intensity: 0.015; color: #cfe9ff; groundColor: #070a0e"></a-entity>
+    <a-entity light="type: hemisphere; intensity: 0.012; color: #cfe9ff; groundColor: #070a0e"></a-entity>
     <a-entity light="type: ambient; color: #0b1220; intensity: 0.012"></a-entity>
     
 
@@ -18072,6 +19090,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
 
       <a-ring id="endchamber_handrail_top"
                   radius-inner="1.42" radius-outer="1.52"
+                  segments-theta="256"
                   position="0 0.58 0"
                   rotation="-90 0 0"
                   material="shader: standard; color: #cfcfcf; roughness: 0.5; metalness: 0.6; emissive: #000000; emissiveIntensity: 0.0"
@@ -18148,8 +19167,8 @@ AFRAME.registerComponent('seam-grain-fringe', {
     <!-- Earth placeholder (temporary white sphere) -->
     <a-sphere id="lia_earth"
               radius="11"
-              segments-width="128"
-              segments-height="128"
+              segments-width="256"
+              segments-height="256"
               position="0 35 -220"
               rotation="0 180 0"
               material="shader: flat; src: #earthTex; transparent: true; opacity: 0.75"
@@ -18165,7 +19184,7 @@ AFRAME.registerComponent('seam-grain-fringe', {
 
     <a-entity id="lia_lunar_skyfill"
               position="0 18.0 0"
-              light="type: hemisphere; color: #d9f1ff; groundColor: #0b0b0b; intensity: 0.55"
+              light="type: hemisphere; color: #d9f1ff; groundColor: #0b0b0b; intensity: 0.44"
               three-layer="layer: 2"></a-entity>
 
 <!-- Soft animated haze cone (same family as aya_dome spot cones) -->
@@ -18430,8 +19449,8 @@ AFRAME.registerComponent('seam-grain-fringe', {
 --------------------------------------------------------------------------- */
 AFRAME.registerComponent('adaptive-resolution', {
   schema: {
-    startScale: {type: 'number', default: 0.78},
-    minScale:   {type: 'number', default: 0.55},
+    startScale: {type: 'number', default: 0.90},
+    minScale:   {type: 'number', default: 0.75},
     maxScale:   {type: 'number', default: 1.00},
     dprCap:     {type: 'number', default: 1.25},
     adjustEveryMs: {type: 'int', default: 650},
@@ -18535,7 +19554,7 @@ AFRAME.registerComponent('adaptive-resolution', {
 
       // Cap canvas DPR to reduce final full-screen pass cost on high-DPR screens.
       // (Does not change scene content; only internal render resolution.)
-      const canvasPR = (q > 0.98) ? dpr : Math.min(dpr, 0.85);
+      const canvasPR = (q > 0.98) ? dpr : Math.min(dpr, 1.0);
       renderer.setPixelRatio(canvasPR);
 
       if (postfx && postfx.composer) {
@@ -18544,7 +19563,7 @@ AFRAME.registerComponent('adaptive-resolution', {
         postfx.composer.setSize(size.x, size.y);
 
         if (postfx._bloom && postfx._bloom.setSize) {
-          postfx._bloom.setSize(Math.floor(size.x * 0.6), Math.floor(size.y * 0.6));
+          postfx._bloom.setSize(Math.floor(size.x * 0.65), Math.floor(size.y * 0.65));
         }
       }
     } catch (e) {}
@@ -18643,6 +19662,37 @@ AFRAME.registerComponent('freeze-static-mesh', {
   }
 });
 
+</script>
+
+<script id="quitUiScript">
+(function () {
+  const QUIT = document.getElementById('quitBtn');
+  const QC = document.getElementById('quitConfirm');
+  const Q_CANCEL = document.getElementById('quitCancel');
+  const Q_OK = document.getElementById('quitConfirmBtn');
+
+  function openQuitConfirm(){
+    if (!QC) return;
+    QC.classList.add('show');
+    QC.setAttribute('aria-hidden','false');
+  }
+  function closeQuitConfirm(){
+    if (!QC) return;
+    QC.classList.remove('show');
+    QC.setAttribute('aria-hidden','true');
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      if (QC && QC.classList.contains('show')) closeQuitConfirm();
+    }
+  }, { passive: true });
+
+  if (QUIT) QUIT.addEventListener('click', openQuitConfirm);
+  if (Q_CANCEL) Q_CANCEL.addEventListener('click', closeQuitConfirm);
+  if (QC) QC.addEventListener('click', (e) => { if (e.target === QC) closeQuitConfirm(); });
+  if (Q_OK) Q_OK.addEventListener('click', () => { window.location.href = 'https://www.enricopoli.com/pagex'; });
+})();
 </script>
 
 </body>
