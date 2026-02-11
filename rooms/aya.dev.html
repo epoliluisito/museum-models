@@ -532,23 +532,29 @@ float alphaH = smoothstep(cutU - featherU, cutU + featherU, vUV.y);
 </script>
 
 <script>
-/* Hide pointer during Mercury pool experience video playback (ayaExperienceVideo). */
+/* Hide pointer during Mercury pool experience video playback.
+   IMPORTANT: the experience plays in the fullscreen overlay video (#ayaFullscreenVideo).
+   We also bind to the asset video (#ayaExperienceVideo) in case it is used directly.
+*/
 (function () {
-  function bind() {
-    var v = document.getElementById('ayaExperienceVideo');
+  function bindOne(id) {
+    var v = document.getElementById(id);
     if (!v) return;
-
-    function hide() { document.body.classList.add('hide-pointer'); }
-    function show() { document.body.classList.remove('hide-pointer'); }
-
-    v.addEventListener('play', hide);
-    v.addEventListener('pause', show);
-    v.addEventListener('ended', show);
-    v.addEventListener('emptied', show);
+    function hide() { document.body.classList.add("hide-pointer"); }
+    function show() { document.body.classList.remove("hide-pointer"); }
+    v.addEventListener("play", hide);
+    v.addEventListener("pause", show);
+    v.addEventListener("ended", show);
+    v.addEventListener("emptied", show);
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', bind, { once: true });
+  function bind() {
+    bindOne("ayaFullscreenVideo");
+    bindOne("ayaExperienceVideo");
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bind, { once: true });
   } else {
     bind();
   }
