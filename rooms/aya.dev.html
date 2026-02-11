@@ -69,7 +69,10 @@
       line-height: 1.3;
       vertical-align: baseline;
     }
-  </style>
+  
+    /* Hide mouse cursor only during experience playback */
+    body.hide-pointer, body.hide-pointer * { cursor: none !important; }
+</style>
 
 <style>
   /* === Fullscreen video overlay (Mercury Pool Experience) === */
@@ -528,6 +531,29 @@ float alphaH = smoothstep(cutU - featherU, cutU + featherU, vUV.y);
 /* Boost Earth texture brightness (works even for embedded/base64 textures). */
 </script>
 
+<script>
+/* Hide pointer during Mercury pool experience video playback (ayaExperienceVideo). */
+(function () {
+  function bind() {
+    var v = document.getElementById('ayaExperienceVideo');
+    if (!v) return;
+
+    function hide() { document.body.classList.add('hide-pointer'); }
+    function show() { document.body.classList.remove('hide-pointer'); }
+
+    v.addEventListener('play', hide);
+    v.addEventListener('pause', show);
+    v.addEventListener('ended', show);
+    v.addEventListener('emptied', show);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bind, { once: true });
+  } else {
+    bind();
+  }
+})();
+</script>
 
 <script>
 /* -------------------------------------------------------------------------
