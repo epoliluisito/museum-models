@@ -2095,6 +2095,49 @@ const far = this.data.avoidDist;
   #elevatorVideoOverlay.fadeOut{ transition: opacity 450ms ease; opacity: 0; }
 
 
+  /* Skip Elevator (only during elevator ride video) */
+  #skipElevatorShell{
+    position: absolute;
+    left: 50%;
+    bottom: 18px;
+    transform: translateX(-50%) translateY(6px);
+    z-index: 100000;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 260ms ease, transform 260ms ease;
+  }
+  #elevatorVideoOverlay.active #skipElevatorShell{
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(-50%) translateY(0);
+  }
+  #skipElevatorBtn{
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: rgba(255,255,255,0.92);
+    font-weight: 800;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    font-size: 12px;
+    cursor: pointer;
+    user-select: none;
+    text-decoration: underline;
+    text-underline-offset: 6px;
+    text-decoration-thickness: 1px;
+    opacity: 0.92;
+    transition: opacity 140ms ease, transform 120ms ease;
+  }
+  #skipElevatorBtn:hover{ opacity: 1; }
+  #skipElevatorBtn:active{ transform: translateY(1px); }
+  #skipElevatorBtn:focus-visible{
+    outline: 2px solid rgba(255,255,255,0.22);
+    outline-offset: 8px;
+    border-radius: 10px;
+  }
+
+
+
   /* ----------------------------------------------------------
      AYA preload iframe (kept invisible until room swap)
   ----------------------------------------------------------- */
@@ -2159,6 +2202,9 @@ const far = this.data.avoidDist;
          disablepictureinpicture disableremoteplayback controlslist="nodownload noplaybackrate noremoteplayback">
     <source src="elevator_ride.mp4" type="video/mp4"/>
   </video>
+  <div id="skipElevatorShell" aria-hidden="true">
+    <div id="skipElevatorBtn" role="button" tabindex="0" aria-label="Skip elevator">SKIP ELEVATOR</div>
+  </div>
 </div>
 <!-- ===== END UI OVERLAY ===== -->
 
@@ -6032,8 +6078,10 @@ AFRAME.registerComponent('pbr-carpet', {
 
   const overlay = document.getElementById('elevatorVideoOverlay');
   const rideVideo = document.getElementById('elevatorRideVideo');
+  const skipElevatorShell = document.getElementById('skipElevatorShell');
+  const skipElevatorBtn = document.getElementById('skipElevatorBtn');
 
-  if (!elevator || !rig || !cam || !doorL || !doorR || !guide || !guideChoice || !overlay || !rideVideo) return;
+  if (!elevator || !rig || !cam || !doorL || !doorR || !guide || !guideChoice || !overlay || !rideVideo || !skipElevatorShell || !skipElevatorBtn) return;
 
   // --- helpers
   const DEG2RAD = Math.PI / 180;
@@ -6298,7 +6346,60 @@ AFRAME.registerComponent('pbr-carpet', {
     requestAnimationFrame(tick);
   }
 
-  function startOverlayVideo(){
+  
+  let __elevatorRideFinished = false;
+
+  function finishElevatorRide(){
+    if (__elevatorRideFinished) return;
+    __elevatorRideFinished = true;
+
+    // Hide skip UI immediately.
+    try {
+      if (skipElevatorShell){
+        skipElevatorShell.style.opacity = '0';
+        skipElevatorShell.style.pointerEvents = 'none';
+      }
+    } catch (e) {}
+
+    // Stop video cleanly.
+    try { rideVideo.pause(); } catch (e) {}
+
+    // Hold a fully-opaque black cover before navigating.
+    overlay.classList.remove('fadeIn');
+    overlay.classList.remove('fadeOut');
+    overlay.style.display = 'flex';
+    overlay.style.background = 'rgba(0,0,0,1)';
+    overlay.style.opacity = '1';
+    overlay.style.zIndex = '99999';
+
+    // Now wait for AYA to be fully ready (or hit fallback) before hard navigation.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(waitForAyaReadyThenNavigate);
+    });
+  }
+
+  function onSkipElevatorActivate(e){
+    if (e && e.preventDefault) e.preventDefault();
+    finishElevatorRide();
+  }
+
+  if (skipElevatorBtn){
+    skipElevatorBtn.addEventListener('click', onSkipElevatorActivate);
+    skipElevatorBtn.addEventListener('keydown', (e)=>{
+      const k = e.key || '';
+      if (k === 'Enter' || k === ' ' || k === 'Spacebar') onSkipElevatorActivate(e);
+    });
+  }
+
+function startOverlayVideo(){
+    __elevatorRideFinished = false;
+    try {
+      if (skipElevatorShell){
+        skipElevatorShell.style.opacity = '';
+        skipElevatorShell.style.pointerEvents = '';
+      }
+    } catch (e) {}
+
     // Hide guide immediately for immersion
     hideGuide();
 
@@ -6331,20 +6432,7 @@ AFRAME.registerComponent('pbr-carpet', {
     // Preload next room while the video plays (cache warmup + READY handshake).
     if (window.preloadAyaFragment) window.preloadAyaFragment();
 
-    rideVideo.onended = () => {
-      // Hold a fully-opaque black cover before navigating.
-      overlay.classList.remove('fadeIn');
-      overlay.classList.remove('fadeOut');
-      overlay.style.display = 'flex';
-      overlay.style.background = 'rgba(0,0,0,1)';
-      overlay.style.opacity = '1';
-      overlay.style.zIndex = '99999';
-
-      // Now wait for AYA to be fully ready (or hit fallback) before hard navigation.
-      requestAnimationFrame(() => {
-        requestAnimationFrame(waitForAyaReadyThenNavigate);
-      });
-    };
+    rideVideo.onended = finishElevatorRide;
   }
 
   function onFirstF(){
